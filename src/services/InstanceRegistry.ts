@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { TerminalBackendType } from "../types";
 import { InstanceConfig, InstanceRecord, InstanceStore } from "./InstanceStore";
 
 const GLOBAL_INSTANCES_KEY = "opencodeTui.instances.global";
@@ -175,7 +176,21 @@ export class InstanceRegistry implements vscode.Disposable {
 
   private toConfigs(records: readonly InstanceRecord[]): InstanceConfig[] {
     return records
-      .map((record) => this.toConfig(record.config))
+      .map((record) => {
+        const config = this.toConfig(record.config);
+        if (!config) {
+          return undefined;
+        }
+
+        if (
+          config.terminalBackend === undefined &&
+          record.runtime.terminalBackend
+        ) {
+          config.terminalBackend = record.runtime.terminalBackend;
+        }
+
+        return config;
+      })
       .filter((config): config is InstanceConfig => Boolean(config));
   }
 
@@ -220,6 +235,10 @@ export class InstanceRegistry implements vscode.Disposable {
       enableHttpApi:
         typeof candidate.enableHttpApi === "boolean"
           ? candidate.enableHttpApi
+          : undefined,
+      terminalBackend:
+        typeof candidate.terminalBackend === "string"
+          ? (candidate.terminalBackend as TerminalBackendType)
           : undefined,
     };
   }

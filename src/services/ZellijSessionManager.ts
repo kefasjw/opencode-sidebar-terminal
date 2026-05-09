@@ -51,6 +51,8 @@ export interface ZellijTab {
 }
 
 export class ZellijSessionManager {
+  private activeSessionName?: string;
+
   public constructor(
     private readonly logger?: ILogger,
     private readonly runExecFile: ExecFileLike = (
@@ -62,6 +64,10 @@ export class ZellijSessionManager {
       execFile(file, args, options, callback);
     },
   ) {}
+
+  public setActiveSessionName(name: string | undefined): void {
+    this.activeSessionName = name;
+  }
 
   public async isAvailable(): Promise<boolean> {
     try {
@@ -569,13 +575,17 @@ export class ZellijSessionManager {
   }
 
   private async runZellij(args: string[], cwd?: string): Promise<string> {
+    const effectiveArgs =
+      args[0] === "action" && this.activeSessionName
+        ? ["--session", this.activeSessionName, ...args]
+        : args;
     return new Promise<string>((resolve, reject) => {
-      this.runExecFile("zellij", args, cwd ? { cwd } : {}, (error, stdout, stderr) => {
+      this.runExecFile("zellij", effectiveArgs, cwd ? { cwd } : {}, (error, stdout, stderr) => {
         if (error) {
           reject(Object.assign(error, { stderr: stderr || (error as ExecError).stderr || "" }));
           return;
         }
-        resolve(stdout);
+        resolve(stdout.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''));
       });
     });
   }

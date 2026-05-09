@@ -378,8 +378,8 @@
         },
         "opencodeTui.autoStartOnOpen": {
           "type": "boolean",
-          "default": true,
-          "description": "Automatically start OpenCode when the sidebar is opened (only when visible, not on VS Code reload)"
+          "default": false,
+          "description": "Automatically start the AI tool when the sidebar is opened. When false, shows a tool selector each time."
         },
         "opencodeTui.shellPath": {
           "type": "string",
@@ -460,7 +460,7 @@
         "opencodeTui.collapseSecondaryBarOnEditorOpen": {
           "type": "boolean",
           "default": true,
-          "description": "Close the secondary and primary sidebars before moving the terminal into an editor group so the new editor tab gets the full workspace width."
+          "description": "Close the secondary sidebar before moving the terminal into an editor group so the new editor tab gets the full workspace width."
         },
         "opencodeTui.codeActionSeverities": {
           "type": "array",

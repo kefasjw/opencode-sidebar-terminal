@@ -190,7 +190,7 @@ export function getToolDetectionPatterns(tool: AiToolConfig): string[] {
       patterns.add(basename);
     }
   }
-  return [...patterns];
+  return Array.from(patterns);
 }
 
 export function detectAiToolName(

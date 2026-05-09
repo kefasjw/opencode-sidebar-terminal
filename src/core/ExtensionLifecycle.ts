@@ -12,6 +12,7 @@ import { InstanceStore } from "../services/InstanceStore";
 import { InstanceRegistry } from "../services/InstanceRegistry";
 import { InstanceQuickPick } from "../services/InstanceQuickPick";
 import { InstanceController } from "../services/InstanceController";
+import { NativeTerminalManager } from "../services/NativeTerminalManager";
 import { PortManager } from "../services/PortManager";
 import { ConnectionResolver } from "../services/ConnectionResolver";
 import { TmuxSessionManager } from "../services/TmuxSessionManager";
@@ -136,6 +137,7 @@ export class ExtensionLifecycle {
           !!this.zellijSessionManager,
         ),
       ]);
+      const nativeTerminalManager = new NativeTerminalManager(logger);
       this.instanceRegistry = new InstanceRegistry(context);
       this.instanceRegistry.hydrate(this.instanceStore);
 
@@ -175,6 +177,7 @@ export class ExtensionLifecycle {
         this.tmuxSessionManager,
         this.zellijSessionManager,
         this.backendRegistry,
+        nativeTerminalManager,
       );
 
       // Register webview provider — guard against double-registration on fast

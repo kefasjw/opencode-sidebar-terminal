@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import * as vscode from "vscode";
 import { TerminalBackendType } from "../types";
+import type { BackendSessionState } from "./terminalBackends";
 
 export type InstanceId = string;
 
@@ -21,6 +22,7 @@ export interface InstanceConfig {
   selectedAiTool?: string;
   preferredPort?: number;
   enableHttpApi?: boolean;
+  terminalBackend?: TerminalBackendType;
 }
 
 interface InstanceRuntime {
@@ -30,6 +32,7 @@ interface InstanceRuntime {
   tmuxSessionId?: string;
   zellijSessionId?: string;
   terminalBackend?: TerminalBackendType;
+  backendState?: BackendSessionState;
   lastSeenAt?: number;
 }
 
@@ -232,6 +235,20 @@ export class InstanceStore {
       },
       runtime: {
         ...record.runtime,
+        backendState: record.runtime.backendState
+          ? {
+              ...record.runtime.backendState,
+              launchSpec: {
+                ...record.runtime.backendState.launchSpec,
+                args: record.runtime.backendState.launchSpec.args
+                  ? [...record.runtime.backendState.launchSpec.args]
+                  : undefined,
+                env: record.runtime.backendState.launchSpec.env
+                  ? { ...record.runtime.backendState.launchSpec.env }
+                  : undefined,
+              },
+            }
+          : undefined,
       },
       state: record.state,
       health: record.health
