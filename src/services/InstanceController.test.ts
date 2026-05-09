@@ -456,6 +456,41 @@ describe("InstanceController", () => {
       expect(record?.error).toBeUndefined();
     });
 
+    it("returns undefined when resolving an unknown instance", async () => {
+      await expect(controller.resolve("missing-instance")).resolves.toBeUndefined();
+    });
+
+    it("uses the original record if resolver removes the instance before returning", async () => {
+      const resolver = {
+        resolve: vi.fn(async () => {
+          instanceStore.remove("instance-resolve-removed");
+          return 20010;
+        }),
+      } as unknown as ConnectionResolver;
+
+      controller = new InstanceController(
+        terminalManager,
+        instanceStore,
+        portManager,
+        outputChannel,
+        resolver,
+      );
+
+      instanceStore.upsert({
+        config: { id: "instance-resolve-removed" },
+        runtime: {},
+        state: "disconnected",
+      });
+
+      await expect(
+        controller.resolve("instance-resolve-removed"),
+      ).resolves.toBe(20010);
+
+      expect(instanceStore.get("instance-resolve-removed")?.state).toBe(
+        "connected",
+      );
+    });
+
     it("returns undefined when resolver reports no healthy port", async () => {
       const resolver = {
         resolve: vi.fn().mockResolvedValue(undefined),
@@ -514,6 +549,85 @@ describe("InstanceController", () => {
       expect(record?.error).toBe("resolver boom");
       expect(outputChannel.error).toHaveBeenCalledWith(
         "[InstanceController] Failed to resolve 'instance-resolve-error': resolver boom",
+      );
+    });
+
+    it("stringifies non-Error resolver failures", async () => {
+      const resolver = {
+        resolve: vi.fn().mockRejectedValue("resolver string"),
+      } as unknown as ConnectionResolver;
+
+      controller = new InstanceController(
+        terminalManager,
+        instanceStore,
+        portManager,
+        outputChannel,
+        resolver,
+      );
+
+      instanceStore.upsert({
+        config: { id: "instance-resolve-string-error" },
+        runtime: {},
+        state: "disconnected",
+      });
+
+      await expect(
+        controller.resolve("instance-resolve-string-error"),
+      ).resolves.toBeUndefined();
+
+      expect(instanceStore.get("instance-resolve-string-error")?.error).toBe(
+        "resolver string",
+      );
+      expect(outputChannel.error).toHaveBeenCalledWith(
+        "[InstanceController] Failed to resolve 'instance-resolve-string-error': resolver string",
+      );
+    });
+
+    it("uses the original record if a non-Error resolver failure removes the instance", async () => {
+      const resolver = {
+        resolve: vi.fn(async () => {
+          instanceStore.remove("instance-resolve-removed-error");
+          throw "resolver removed string";
+        }),
+      } as unknown as ConnectionResolver;
+
+      controller = new InstanceController(
+        terminalManager,
+        instanceStore,
+        portManager,
+        outputChannel,
+        resolver,
+      );
+
+      instanceStore.upsert({
+        config: { id: "instance-resolve-removed-error" },
+        runtime: {},
+        state: "disconnected",
+      });
+
+      await expect(
+        controller.resolve("instance-resolve-removed-error"),
+      ).resolves.toBeUndefined();
+
+      expect(instanceStore.get("instance-resolve-removed-error")?.error).toBe(
+        "resolver removed string",
+      );
+    });
+
+    it("records non-Error spawn failures through the generic failure handler", async () => {
+      vi.spyOn(portManager, "assignPortToTerminal").mockImplementation(() => {
+        throw "port string";
+      });
+
+      await expect(controller.spawn("instance-spawn-string")).rejects.toBe(
+        "port string",
+      );
+
+      expect(instanceStore.get("instance-spawn-string")?.error).toBe(
+        "port string",
+      );
+      expect(outputChannel.error).toHaveBeenCalledWith(
+        "[InstanceController] Failed to spawn 'instance-spawn-string': port string",
       );
     });
 

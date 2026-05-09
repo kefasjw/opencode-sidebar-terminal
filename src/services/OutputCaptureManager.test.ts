@@ -111,6 +111,18 @@ describe("OutputCaptureManager", () => {
     });
   });
 
+  it("stringifies non-Error start failures", () => {
+    const terminal = createTerminal();
+    vi.mocked(terminal.sendText).mockImplementation(() => {
+      throw "terminal unavailable";
+    });
+
+    expect(manager.startCapture(terminal)).toEqual({
+      success: false,
+      error: "Failed to start capture: terminal unavailable",
+    });
+  });
+
   it("stops an active capture by exiting the nested script shell", () => {
     const terminal = createTerminal();
 
@@ -185,6 +197,27 @@ describe("OutputCaptureManager", () => {
     );
   });
 
+  it("stringifies non-Error read failures", () => {
+    const logger = { error: vi.fn() } as Pick<
+      OutputChannelService,
+      "error"
+    > as OutputChannelService;
+    vi.spyOn(OutputChannelService, "getInstance").mockReturnValue(logger);
+
+    const terminal = createTerminal();
+    manager.startCapture(terminal);
+
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockImplementation(() => {
+      throw "read unavailable";
+    });
+
+    expect(manager.readCapture(terminal)).toBe("");
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to read capture file: read unavailable",
+    );
+  });
+
   it("deletes the temp file during cleanup and removes the capture mapping", () => {
     const terminal = createTerminal();
     vi.spyOn(Date, "now").mockReturnValue(1712345678902);
@@ -225,6 +258,28 @@ describe("OutputCaptureManager", () => {
       "Failed to delete capture file: permission denied",
     );
     expect(manager.readCapture(terminal)).toBe("");
+  });
+
+  it("stringifies non-Error cleanup failures", () => {
+    const logger = { error: vi.fn() } as Pick<
+      OutputChannelService,
+      "error"
+    > as OutputChannelService;
+    vi.spyOn(OutputChannelService, "getInstance").mockReturnValue(logger);
+
+    const terminal = createTerminal();
+    manager.startCapture(terminal);
+
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.unlinkSync).mockImplementation(() => {
+      throw "unlink unavailable";
+    });
+
+    manager.cleanup(terminal);
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to delete capture file: unlink unavailable",
+    );
   });
 
   it("cleans up capture state even when the temp file no longer exists", () => {

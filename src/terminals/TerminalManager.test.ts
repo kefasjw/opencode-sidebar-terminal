@@ -23,6 +23,9 @@ vi.mock("node-pty", async () => {
 describe("TerminalManager", () => {
   let manager: TerminalManager;
   const originalPlatform = process.platform;
+  const originalVsCodeShell = vscode.env.shell;
+  const originalShellEnv = process.env.SHELL;
+  const originalComspecEnv = process.env.COMSPEC;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -33,6 +36,9 @@ describe("TerminalManager", () => {
     Object.defineProperty(process, "platform", {
       value: originalPlatform,
     });
+    vscode.env.shell = originalVsCodeShell;
+    process.env.SHELL = originalShellEnv;
+    process.env.COMSPEC = originalComspecEnv;
   });
 
   describe("createTerminal", () => {
@@ -256,6 +262,32 @@ describe("TerminalManager", () => {
       expect(manager.getTerminal("test-id")).toBe(newTerminal);
     });
 
+    it("should emit exit and remove mappings for the current process exit", () => {
+      const globalExitHandler = vi.fn();
+      const localExitHandler = vi.fn();
+      manager.onExit(globalExitHandler);
+
+      const terminal = manager.createTerminal(
+        "test-id",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "instance-id",
+      );
+      terminal.onExit.event(localExitHandler);
+
+      (terminal.process as unknown as nodePtyTypes.MockPtyProcess)._simulateExit(
+        0,
+      );
+
+      expect(localExitHandler).toHaveBeenCalledWith("test-id");
+      expect(globalExitHandler).toHaveBeenCalledWith("test-id");
+      expect(manager.getTerminal("test-id")).toBeUndefined();
+      expect(manager.getByInstance("instance-id")).toBeUndefined();
+    });
+
     it("should ignore stale onData from killed process when terminal is recreated with same id", () => {
       const dataHandler = vi.fn();
       manager.onData(dataHandler);
@@ -286,6 +318,64 @@ describe("TerminalManager", () => {
 
       expect(killSpy).toHaveBeenCalledWith("id1");
       expect(killSpy).toHaveBeenCalledWith("id2");
+    });
+  });
+
+  describe("instance mapping", () => {
+    it("should return undefined when no terminal is mapped to an instance", () => {
+      expect(manager.getByInstance("missing-instance")).toBeUndefined();
+    });
+
+    it("should kill by instance when a mapping exists", () => {
+      const terminal = manager.createTerminal(
+        "terminal-id",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "instance-id",
+      );
+      const killSpy = vi.spyOn(terminal.process, "kill");
+
+      expect(manager.getByInstance("instance-id")).toBe(terminal);
+
+      manager.killByInstance("instance-id");
+
+      expect(killSpy).toHaveBeenCalled();
+      expect(manager.getByInstance("instance-id")).toBeUndefined();
+    });
+
+    it("should remove only the mapping for the killed terminal", () => {
+      const first = manager.createTerminal(
+        "first-terminal",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "first-instance",
+      );
+      const second = manager.createTerminal(
+        "second-terminal",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "second-instance",
+      );
+
+      manager.killTerminal("second-terminal");
+
+      expect(manager.getByInstance("first-instance")).toBe(first);
+      expect(manager.getByInstance("second-instance")).toBeUndefined();
+      expect(manager.getTerminal("second-terminal")).toBeUndefined();
+      expect(second.process.kill).toHaveBeenCalled();
+    });
+
+    it("should no-op when killing an unmapped instance", () => {
+      expect(() => manager.killByInstance("missing-instance")).not.toThrow();
     });
   });
 
@@ -380,6 +470,108 @@ describe("TerminalManager", () => {
       expect(nodePty.spawn).toHaveBeenCalledWith(
         "pwsh.exe",
         ["-Command", "opencode"],
+        expect.any(Object),
+      );
+    });
+
+    it("should fall back to COMSPEC on Windows when VS Code shell is empty", () => {
+      Object.defineProperty(process, "platform", {
+        value: "win32",
+      });
+      vscode.env.shell = "";
+      process.env.COMSPEC = "C:\\Windows\\System32\\cmd.exe";
+      const configuration = {
+        get: vi.fn((key: string) => {
+          if (key === "shellPath") return "";
+          if (key === "shellArgs") return [];
+          return undefined;
+        }),
+        update: vi.fn(),
+      } as ReturnType<typeof vscode.workspace.getConfiguration>;
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue(
+        configuration,
+      );
+
+      manager.createTerminal("test-id", "opencode");
+
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "C:\\Windows\\System32\\cmd.exe",
+        ["-c", "opencode"],
+        expect.any(Object),
+      );
+    });
+
+    it("should fall back to cmd.exe on Windows when COMSPEC is empty", () => {
+      Object.defineProperty(process, "platform", {
+        value: "win32",
+      });
+      vscode.env.shell = "";
+      process.env.COMSPEC = "";
+      const configuration = {
+        get: vi.fn((key: string) => {
+          if (key === "shellPath") return "";
+          if (key === "shellArgs") return [];
+          return undefined;
+        }),
+        update: vi.fn(),
+      } as ReturnType<typeof vscode.workspace.getConfiguration>;
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue(
+        configuration,
+      );
+
+      manager.createTerminal("test-id", "opencode");
+
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "cmd.exe",
+        ["/c", "opencode"],
+        expect.any(Object),
+      );
+    });
+
+    it("should fall back to the SHELL environment variable on non-Windows", () => {
+      vscode.env.shell = "";
+      process.env.SHELL = "/bin/zsh";
+      const configuration = {
+        get: vi.fn((key: string) => {
+          if (key === "shellPath") return "";
+          if (key === "shellArgs") return [];
+          return undefined;
+        }),
+        update: vi.fn(),
+      } as ReturnType<typeof vscode.workspace.getConfiguration>;
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue(
+        configuration,
+      );
+
+      manager.createTerminal("test-id", "opencode");
+
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "/bin/zsh",
+        ["-c", "opencode"],
+        expect.any(Object),
+      );
+    });
+
+    it("should fall back to bash on non-Windows when SHELL is empty", () => {
+      vscode.env.shell = "";
+      process.env.SHELL = "";
+      const configuration = {
+        get: vi.fn((key: string) => {
+          if (key === "shellPath") return "";
+          if (key === "shellArgs") return [];
+          return undefined;
+        }),
+        update: vi.fn(),
+      } as ReturnType<typeof vscode.workspace.getConfiguration>;
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue(
+        configuration,
+      );
+
+      manager.createTerminal("test-id", "opencode");
+
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "/bin/bash",
+        ["-c", "opencode"],
         expect.any(Object),
       );
     });

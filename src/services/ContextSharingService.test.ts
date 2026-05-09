@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ContextSharingService, Context } from "./ContextSharingService";
+import { FileReferenceManager } from "./FileReferenceManager";
 import type * as vscodeTypes from "../test/mocks/vscode";
 
 const vscode = await vi.importActual<typeof vscodeTypes>(
@@ -240,6 +241,58 @@ describe("ContextSharingService", () => {
       const result = service.formatContext(context);
 
       expect(result).toBe("@src/deep/nested/component.tsx#L1-L50");
+    });
+  });
+
+  describe("managed file references", () => {
+    it("does nothing when adding current context without a manager", () => {
+      const document = new vscode.TextDocument(
+        { fsPath: "/workspace/src/file.ts", path: "/workspace/src/file.ts" },
+        "content",
+      );
+      vscode.window.activeTextEditor = new vscode.TextEditor(
+        document,
+        new vscode.Selection(0, 0, 0, 0),
+      );
+
+      expect(() => service.addCurrentContextToManager()).not.toThrow();
+      expect(service.formatAllManagedRefs()).toBe("");
+    });
+
+    it("does nothing when a manager exists but no editor context is active", () => {
+      const manager = new FileReferenceManager();
+      const managedService = new ContextSharingService(manager);
+      vscode.window.activeTextEditor = undefined;
+
+      managedService.addCurrentContextToManager();
+
+      expect(manager.getReferences()).toEqual([]);
+      expect(managedService.formatAllManagedRefs()).toBe("");
+    });
+
+    it("adds the current selected context to the manager and serializes it", () => {
+      const manager = new FileReferenceManager();
+      const managedService = new ContextSharingService(manager);
+      const document = new vscode.TextDocument(
+        { fsPath: "/workspace/src/managed.ts", path: "/workspace/src/managed.ts" },
+        "line1\nline2\nline3",
+      );
+      vscode.window.activeTextEditor = new vscode.TextEditor(
+        document,
+        new vscode.Selection(1, 0, 2, 5),
+      );
+      vi.mocked(vscode.workspace.asRelativePath).mockReturnValue(
+        "src/managed.ts",
+      );
+
+      managedService.addCurrentContextToManager();
+
+      expect(manager.getReferences()).toMatchObject([
+        { path: "src/managed.ts", lineStart: 2, lineEnd: 3 },
+      ]);
+      expect(managedService.formatAllManagedRefs()).toBe(
+        "@src/managed.ts#L2-3",
+      );
     });
   });
 });

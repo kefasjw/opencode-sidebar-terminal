@@ -79,6 +79,7 @@ describe("AiToolOperatorRegistry", () => {
     const registry = new AiToolOperatorRegistry();
 
     expect(registry.resolveTool([], undefined)?.name).toBe("opencode");
+    expect(registry.resolveTool([{}], undefined)?.name).toBe("opencode");
     expect(
       registry.resolveTool(
         [
@@ -131,5 +132,19 @@ describe("AiToolOperatorRegistry", () => {
       "assistant",
     );
     expect(registry.resolveTool(userTools, "missing")).toBeUndefined();
+  });
+
+  it("matches tool names when aliases are omitted", () => {
+    const registry = new AiToolOperatorRegistry();
+    const tool = {
+      name: "plain",
+      label: "Plain",
+      path: "",
+      args: [],
+      operator: undefined,
+    };
+
+    expect(registry.matchesName(tool, "plain")).toBe(true);
+    expect(registry.matchesName(tool, "missing")).toBe(false);
   });
 });

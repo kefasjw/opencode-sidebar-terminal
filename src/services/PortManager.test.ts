@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { PortManager } from "./PortManager";
+import { InstanceStore } from "./InstanceStore";
 
 describe("PortManager", () => {
   let portManager: PortManager;
@@ -39,6 +40,25 @@ describe("PortManager", () => {
           break;
         }
       }
+
+      expect(() => portManager.getAvailablePort()).toThrow(
+        "No available ports in range 16384-65535",
+      );
+    });
+
+    it("should fall back to sequential scan when random attempts collide", () => {
+      vi.spyOn(Math, "random").mockReturnValue(0);
+      portManager.reservePort(16384);
+
+      expect(portManager.getAvailablePort()).toBe(16385);
+    });
+
+    it("should throw when fallback scan cannot find a free port", () => {
+      const portSet = {
+        size: 0,
+        has: () => true,
+      };
+      Reflect.set(portManager, "usedPorts", portSet);
 
       expect(() => portManager.getAvailablePort()).toThrow(
         "No available ports in range 16384-65535",
@@ -203,6 +223,20 @@ describe("PortManager", () => {
 
     it("should return false for port above range", () => {
       expect(portManager.isPortAvailable(70000)).toBe(false);
+    });
+
+    it("should return false for ports claimed by the instance store", () => {
+      const instanceStore = new InstanceStore();
+      instanceStore.upsert({
+        config: { id: "claimed" },
+        runtime: { port: 30000 },
+        state: "connected",
+      });
+
+      const coordinatedPortManager = new PortManager(instanceStore);
+
+      expect(coordinatedPortManager.isPortAvailable(30000)).toBe(false);
+      expect(coordinatedPortManager.isPortAvailable(30001)).toBe(true);
     });
   });
 

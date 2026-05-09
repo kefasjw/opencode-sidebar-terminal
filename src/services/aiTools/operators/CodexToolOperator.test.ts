@@ -38,6 +38,11 @@ describe("CodexToolOperator", () => {
         }),
       ),
     ).toBe(false);
+    expect(
+      operator.matches(
+        createTool({ name: "custom", operator: "custom", aliases: undefined }),
+      ),
+    ).toBe(false);
   });
 
   it("resolves launch commands from config", () => {

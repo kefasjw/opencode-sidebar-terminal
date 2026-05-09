@@ -8,6 +8,7 @@ import {
 } from "./InstanceDiscoveryService";
 import { InstanceController } from "./InstanceController";
 import { OpenCodeApiClient } from "./OpenCodeApiClient";
+import { ILogger } from "./ILogger";
 
 vi.mock("./InstanceDiscoveryService");
 vi.mock("./InstanceController");
@@ -17,7 +18,7 @@ describe("ConnectionResolver", () => {
   let mockStore: InstanceStore;
   let mockDiscovery: InstanceDiscoveryService;
   let mockController: InstanceController;
-  let mockOutputChannel: vscode.OutputChannel;
+  let mockOutputChannel: ILogger;
   let mockHealthCheck: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -199,6 +200,29 @@ describe("ConnectionResolver", () => {
 
       expect(mockDiscovery.discoverInstances).toHaveBeenCalled();
     });
+
+    it("should handle non-error health check rejections", async () => {
+      const record: InstanceRecord = {
+        config: {
+          id: "test-instance",
+        },
+        runtime: {
+          port: 5003,
+        },
+        state: "connected",
+      };
+
+      vi.mocked(mockStore.get).mockReturnValue(record);
+      mockHealthCheck.mockRejectedValue("offline");
+      vi.mocked(mockDiscovery.discoverInstances).mockResolvedValue([]);
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBeUndefined();
+      expect(mockOutputChannel.debug).toHaveBeenCalledWith(
+        expect.stringContaining("offline"),
+      );
+    });
   });
 
   describe("Tier 3: Discovery Resolution", () => {
@@ -312,6 +336,139 @@ describe("ConnectionResolver", () => {
       expect(port).toBeUndefined();
       expect(mockController.spawn).toHaveBeenCalled();
     });
+
+    it("should use the first discovered instance when there is no target workspace", async () => {
+      const discoveredInstance: OpenCodeInstance = {
+        port: 6003,
+        pid: 33333,
+      };
+
+      vi.mocked(mockStore.get).mockReturnValue(undefined);
+      vi.mocked(mockDiscovery.discoverInstances).mockResolvedValue([
+        discoveredInstance,
+      ]);
+      mockHealthCheck.mockResolvedValue(true);
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBe(6003);
+      expect(mockStore.upsert).not.toHaveBeenCalled();
+    });
+
+    it("should ignore discovered instances without workspace paths when matching a target", async () => {
+      const record: InstanceRecord = {
+        config: {
+          id: "test-instance",
+          workspaceUri: "/home/user/project",
+        },
+        runtime: {},
+        state: "disconnected",
+      };
+      const discoveredInstance: OpenCodeInstance = {
+        port: 6004,
+        pid: 44444,
+      };
+
+      vi.mocked(mockStore.get).mockReturnValue(record);
+      vi.mocked(mockDiscovery.discoverInstances).mockResolvedValue([
+        discoveredInstance,
+      ]);
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBeUndefined();
+      expect(mockHealthCheck).not.toHaveBeenCalled();
+    });
+
+    it("should fall back to the raw workspace uri when URI parsing fails", async () => {
+      const record: InstanceRecord = {
+        config: {
+          id: "test-instance",
+          workspaceUri: "not a uri but still a path",
+        },
+        runtime: {},
+        state: "disconnected",
+      };
+      const discoveredInstance: OpenCodeInstance = {
+        port: 6005,
+        pid: 55555,
+        workspacePath: "not a uri but still a path",
+      };
+
+      vi.mocked(mockStore.get).mockReturnValue(record);
+      vi.mocked(mockDiscovery.discoverInstances).mockResolvedValue([
+        discoveredInstance,
+      ]);
+      vi.spyOn(vscode.Uri, "parse").mockImplementationOnce(() => {
+        throw new Error("invalid uri");
+      });
+      mockHealthCheck.mockResolvedValue(true);
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBe(6005);
+    });
+
+    it("should keep the preferred port when syncing a discovered runtime without a port", async () => {
+      const record: InstanceRecord = {
+        config: {
+          id: "test-instance",
+          preferredPort: 6010,
+        },
+        runtime: {},
+        state: "disconnected",
+      };
+      const discoveredInstance: OpenCodeInstance = {
+        get port(): number {
+          return undefined as unknown as number;
+        },
+        pid: 10101,
+      };
+
+      vi.mocked(mockStore.get).mockReturnValue(record);
+      mockHealthCheck
+        .mockResolvedValue(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+      vi.mocked(mockDiscovery.discoverInstances).mockResolvedValue([
+        discoveredInstance,
+      ]);
+
+      await resolver.resolve("test-instance");
+
+      expect(mockStore.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ preferredPort: 6010 }),
+          runtime: expect.objectContaining({ pid: 10101 }),
+        }),
+      );
+    });
+
+    it("should recover when discovery throws an Error", async () => {
+      vi.mocked(mockStore.get).mockReturnValue(undefined);
+      vi.mocked(mockDiscovery.discoverInstances).mockRejectedValue(
+        new Error("ps unavailable"),
+      );
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBeUndefined();
+      expect(mockOutputChannel.debug).toHaveBeenCalledWith(
+        expect.stringContaining("ps unavailable"),
+      );
+    });
+
+    it("should recover when discovery throws a non-error value", async () => {
+      vi.mocked(mockStore.get).mockReturnValue(undefined);
+      vi.mocked(mockDiscovery.discoverInstances).mockRejectedValue("bad scan");
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBeUndefined();
+      expect(mockOutputChannel.debug).toHaveBeenCalledWith(
+        expect.stringContaining("bad scan"),
+      );
+    });
   });
 
   describe("Tier 4: Auto-Spawn Resolution", () => {
@@ -421,6 +578,50 @@ describe("ConnectionResolver", () => {
 
       expect(port).toBeUndefined();
       expect(mockController.spawn).not.toHaveBeenCalled();
+    });
+
+    it("should recover when spawning throws an Error", async () => {
+      const record: InstanceRecord = {
+        config: {
+          id: "test-instance",
+        },
+        runtime: {},
+        state: "disconnected",
+      };
+
+      vi.mocked(mockStore.get).mockReturnValue(record);
+      vi.mocked(mockDiscovery.discoverInstances).mockResolvedValue([]);
+      vi.mocked(mockController.spawn).mockRejectedValue(
+        new Error("spawn failed"),
+      );
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBeUndefined();
+      expect(mockOutputChannel.debug).toHaveBeenCalledWith(
+        expect.stringContaining("spawn failed"),
+      );
+    });
+
+    it("should recover when spawning throws a non-error value", async () => {
+      const record: InstanceRecord = {
+        config: {
+          id: "test-instance",
+        },
+        runtime: {},
+        state: "disconnected",
+      };
+
+      vi.mocked(mockStore.get).mockReturnValue(record);
+      vi.mocked(mockDiscovery.discoverInstances).mockResolvedValue([]);
+      vi.mocked(mockController.spawn).mockRejectedValue("spawn denied");
+
+      const port = await resolver.resolve("test-instance");
+
+      expect(port).toBeUndefined();
+      expect(mockOutputChannel.debug).toHaveBeenCalledWith(
+        expect.stringContaining("spawn denied"),
+      );
     });
   });
 

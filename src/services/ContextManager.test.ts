@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContextManager } from "./ContextManager";
+import { FileReferenceManager } from "./FileReferenceManager";
+import type { OutputChannelService } from "./OutputChannelService";
 import type * as vscodeTypes from "../test/mocks/vscode";
+
+type ManagerUri = Parameters<ContextManager["getDiagnostics"]>[0];
 
 const vscode = await vi.importActual<typeof vscodeTypes>(
   "../test/mocks/vscode",
@@ -38,6 +42,10 @@ describe("ContextManager", () => {
     const selection = new vscode.Selection(0, 0, 0, 0);
     return new vscode.TextEditor(document, selection);
   };
+
+  const asOutputChannel = (
+    outputChannel: ReturnType<typeof createOutputChannelServiceMock>,
+  ): OutputChannelService => outputChannel as unknown as OutputChannelService;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -241,5 +249,112 @@ describe("ContextManager", () => {
     expect(outputChannel.info).toHaveBeenCalledWith(
       expect.stringContaining("ContextManager disposed"),
     );
+  });
+
+  it("logs file reference manager events", () => {
+    const outputChannel = createOutputChannelServiceMock();
+    const fileRefManager = new FileReferenceManager();
+    const manager = new ContextManager(
+      asOutputChannel(outputChannel),
+      fileRefManager,
+    );
+
+    const reference = fileRefManager.addReference({
+      id: "ref-1",
+      path: "src/context.ts",
+    });
+    fileRefManager.removeReference(reference.id);
+    fileRefManager.clearReferences();
+
+    expect(outputChannel.info).toHaveBeenCalledWith(
+      "File reference added: src/context.ts",
+    );
+    expect(outputChannel.info).toHaveBeenCalledWith(
+      "File reference removed: ref-1",
+    );
+    expect(outputChannel.info).toHaveBeenCalledWith(
+      "All file references cleared",
+    );
+
+    manager.dispose();
+  });
+
+  it("ignores document changes for non-active documents", () => {
+    const outputChannel = createOutputChannelServiceMock();
+    const activeEditor = createEditor("/workspace/src/active.ts");
+    vscode.window.activeTextEditor = activeEditor;
+    const manager = new ContextManager(asOutputChannel(outputChannel));
+
+    outputChannel.debug.mockClear();
+    const otherDocument = new vscode.TextDocument(
+      vscode.Uri.file("/workspace/src/other.ts"),
+      "const other = 1;",
+    );
+    onDidChangeTextDocumentListener?.({ document: otherDocument });
+    vi.advanceTimersByTime(500);
+
+    expect(outputChannel.debug).not.toHaveBeenCalledWith(
+      expect.stringContaining("Context updated"),
+    );
+
+    manager.dispose();
+  });
+
+  it("logs none file and selection when active editor is cleared", () => {
+    const outputChannel = createOutputChannelServiceMock();
+    vscode.window.activeTextEditor = createEditor("/workspace/src/initial.ts");
+    const manager = new ContextManager(asOutputChannel(outputChannel));
+
+    outputChannel.debug.mockClear();
+    onDidChangeActiveTextEditorListener?.(undefined);
+    vi.advanceTimersByTime(500);
+
+    expect(outputChannel.debug).toHaveBeenCalledWith(
+      "Context updated (file: none, selection: none)",
+    );
+
+    manager.dispose();
+  });
+
+  it("keys diagnostics by path fallback and URI string fallback", () => {
+    const outputChannel = createOutputChannelServiceMock();
+    const manager = new ContextManager(asOutputChannel(outputChannel));
+    const pathOnlyUri = {
+      fsPath: "",
+      path: "/workspace/src/path-only.ts",
+      toString: () => "file:///workspace/src/path-only.ts",
+    } as unknown as ManagerUri;
+    const stringOnlyUri = {
+      fsPath: "",
+      path: "",
+      toString: () => "untitled:context",
+    } as unknown as ManagerUri;
+    const pathDiagnostics = [
+      { message: "path diagnostic", severity: vscode.DiagnosticSeverity.Warning },
+    ];
+    const stringDiagnostics = [
+      { message: "string diagnostic", severity: vscode.DiagnosticSeverity.Hint },
+    ];
+
+    vi.mocked(vscode.languages.getDiagnostics).mockImplementation(
+      (uri?: ManagerUri) => {
+        if (uri === pathOnlyUri) {
+          return pathDiagnostics;
+        }
+
+        if (uri === stringOnlyUri) {
+          return stringDiagnostics;
+        }
+
+        return [];
+      },
+    );
+
+    onDidChangeDiagnosticsListener?.({ uris: [pathOnlyUri, stringOnlyUri] });
+
+    expect(manager.getDiagnostics(pathOnlyUri)).toEqual(pathDiagnostics);
+    expect(manager.getDiagnostics(stringOnlyUri)).toEqual(stringDiagnostics);
+
+    manager.dispose();
   });
 });

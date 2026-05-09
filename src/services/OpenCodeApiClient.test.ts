@@ -250,6 +250,48 @@ describe("OpenCodeApiClient", () => {
         expect(apiError.code).toBe("MAX_RETRIES_EXHAUSTED");
       }
     });
+
+    it("should throw timeout exhaustion errors with a timeout code", async () => {
+      const abortError = new Error("aborted");
+      abortError.name = "AbortError";
+      mockFetch.mockRejectedValue(abortError);
+
+      const shortClient = new OpenCodeApiClient(TEST_PORT, 0, 10, 25);
+
+      try {
+        await shortClient.appendPrompt("test");
+        expect.fail("Should have thrown");
+      } catch (error) {
+        const apiError = error as Error & { code?: string };
+        expect(apiError.message).toBe(
+          "Request timed out after 25ms (exhausted all 0 retries)",
+        );
+        expect(apiError.code).toBe("TIMEOUT_EXHAUSTED");
+      }
+    });
+
+    it("should retry abort errors when retries remain", async () => {
+      const abortError = new Error("aborted");
+      abortError.name = "AbortError";
+      mockFetch.mockRejectedValueOnce(abortError).mockResolvedValueOnce({
+        ok: true,
+      });
+
+      const shortClient = new OpenCodeApiClient(TEST_PORT, 1, 1, 25);
+
+      await expect(shortClient.appendPrompt("test")).resolves.toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("should stringify non-Error failures after retries are exhausted", async () => {
+      mockFetch.mockRejectedValue("network down");
+
+      const shortClient = new OpenCodeApiClient(TEST_PORT, 0, 10);
+
+      await expect(shortClient.appendPrompt("test")).rejects.toThrow(
+        "Request failed after 0 retries: network down",
+      );
+    });
   });
 
   describe("retry logic", () => {

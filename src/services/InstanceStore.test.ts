@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InstanceStore, InstanceRecord } from "./InstanceStore";
+import type { BackendSessionState } from "./terminalBackends";
 
 describe("InstanceStore", () => {
   let store: InstanceStore;
@@ -51,6 +52,19 @@ describe("InstanceStore", () => {
     it("should return undefined for non-existent id", () => {
       const result = store.get("non-existent");
       expect(result).toBeUndefined();
+    });
+
+    it("should throw when active id points to a missing record", () => {
+      store.upsert({
+        config: { id: "existing" },
+        runtime: {},
+        state: "connected",
+      });
+      Reflect.set(store, "activeInstanceId", "missing");
+
+      expect(() => store.getActive()).toThrow(
+        "Active instance id does not exist in store",
+      );
     });
 
     it("should persist all record fields including optional ones", () => {
@@ -113,6 +127,73 @@ describe("InstanceStore", () => {
       expect(retrieved2?.config.label).toBe("Original");
       expect(retrieved2?.runtime.port).toBe(4096);
       expect(store.get("test-1")?.config.label).toBe("Original");
+    });
+
+    it("should preserve nested backendState launch specs in defensive copies", () => {
+      const backendState: BackendSessionState = {
+        version: 1,
+        backend: "native",
+        restoreMode: "recreate",
+        launchSpec: {
+          command: "opencode",
+          args: ["--chat"],
+          cwd: "/workspace/project",
+          name: "test-1",
+          env: { OPENCODE_CALLER: "vscode" },
+        },
+        createdAt: 1000,
+      };
+      const record: InstanceRecord = {
+        config: { id: "test-1" },
+        runtime: { backendState },
+        state: "connected",
+      };
+
+      store.upsert(record);
+      const retrieved = store.get("test-1");
+
+      expect(retrieved?.runtime.backendState).toEqual(backendState);
+      expect(retrieved?.runtime.backendState).not.toBe(backendState);
+      expect(retrieved?.runtime.backendState?.launchSpec).not.toBe(
+        backendState.launchSpec,
+      );
+      expect(retrieved?.runtime.backendState?.launchSpec.args).not.toBe(
+        backendState.launchSpec.args,
+      );
+      expect(retrieved?.runtime.backendState?.launchSpec.env).not.toBe(
+        backendState.launchSpec.env,
+      );
+    });
+
+    it("should isolate backendState mutations after upsert", () => {
+      const backendState: BackendSessionState = {
+        version: 1,
+        backend: "native",
+        restoreMode: "recreate",
+        launchSpec: {
+          command: "opencode",
+          args: ["--chat"],
+          cwd: "/workspace/project",
+          name: "test-1",
+        },
+        createdAt: 1000,
+      };
+
+      store.upsert({
+        config: { id: "test-1" },
+        runtime: { backendState },
+        state: "connected",
+      });
+
+      backendState.launchSpec.command = "mutated-command";
+      backendState.launchSpec.args?.push("--mutated");
+
+      expect(store.get("test-1")?.runtime.backendState?.launchSpec).toEqual({
+        command: "opencode",
+        args: ["--chat"],
+        cwd: "/workspace/project",
+        name: "test-1",
+      });
     });
   });
 

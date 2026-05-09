@@ -79,6 +79,14 @@ function createDirEntry(
   } as fsTypes.Dirent<string>;
 }
 
+function createOtherDirEntry(name: string): fsTypes.Dirent<string> {
+  return {
+    name,
+    isDirectory: () => false,
+    isFile: () => false,
+  } as fsTypes.Dirent<string>;
+}
+
 function setWorkspaceRoot(rootPath: string | undefined): void {
   vscode.workspace.workspaceFolders = rootPath
     ? [{ uri: { fsPath: rootPath, path: rootPath } }]
@@ -302,6 +310,23 @@ describe("FileReferenceManager", () => {
       expect(fs.readdirSync).toHaveBeenCalledWith("/workspace/src/nested", {
         withFileTypes: true,
       });
+    });
+
+    it("ignores directory entries that are neither files nor directories", async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.statSync).mockReturnValue(createStat(true));
+      Reflect.set(
+        fs,
+        "readdirSync",
+        vi.fn(() => [
+          createOtherDirEntry("socket"),
+          createDirEntry("real.ts", "file"),
+        ]),
+      );
+
+      await expect(manager.expandDirectory("src")).resolves.toEqual([
+        "src/real.ts",
+      ]);
     });
 
     it("expands an absolute directory path and returns workspace-relative files", async () => {

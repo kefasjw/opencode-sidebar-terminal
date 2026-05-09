@@ -297,6 +297,55 @@ describe("InstanceQuickPick", () => {
     );
   });
 
+  it("uses fallback icons and compact descriptions for unusual items", async () => {
+    const unusualRecord = createRecord({
+      config: { id: "unusual" },
+      runtime: {},
+      state: "unknown" as InstanceRecord["state"],
+    });
+
+    vi.spyOn(instanceStore, "getAll").mockReturnValue([unusualRecord]);
+    vi.spyOn(instanceStore, "getActive").mockReturnValue(unusualRecord);
+    vi.spyOn(discoveryService, "discoverInstances").mockResolvedValue([
+      { port: 4900, pid: 12 },
+    ]);
+
+    await new InstanceQuickPick(instanceStore, discoveryService).show();
+
+    expect(quickPicks[0].items[0]).toMatchObject({
+      label: "$(circle-outline) unusual $(check)",
+      description: "unknown",
+    });
+    expect(quickPicks[0].items[1]).toMatchObject({
+      label: "$(circle-large-outline) External :4900",
+      description: "PID 12",
+    });
+  });
+
+  it("stringifies non-Error selection failures", async () => {
+    const connectedRecord = createRecord({
+      config: { id: "connected" },
+      runtime: { port: 4500 },
+      state: "connected",
+    });
+
+    vi.spyOn(instanceStore, "getAll").mockReturnValue([connectedRecord]);
+    vi.spyOn(instanceStore, "getActive").mockReturnValue(connectedRecord);
+    vi.spyOn(instanceStore, "setActive").mockImplementation(() => {
+      throw "cannot switch string";
+    });
+    vi.spyOn(discoveryService, "discoverInstances").mockResolvedValue([]);
+
+    await new InstanceQuickPick(instanceStore, discoveryService).show();
+
+    quickPicks[0].selectedItems = [quickPicks[0].items[0]];
+    await acceptHandlers[0]();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to select tmux session: cannot switch string",
+    );
+  });
+
   it("connects through the controller, upserts without a controller, and reports connect errors", async () => {
     const connectController = {
       connect: vi.fn().mockResolvedValue(undefined),
@@ -390,6 +439,31 @@ describe("InstanceQuickPick", () => {
     );
   });
 
+  it("stringifies non-Error connect failures", async () => {
+    const errorController = {
+      connect: vi.fn().mockRejectedValue("refused string"),
+      disconnect: vi.fn(),
+    };
+    vi.spyOn(instanceStore, "getAll").mockReturnValue([]);
+    vi.spyOn(instanceStore, "getActive").mockImplementation(() => {
+      throw new Error("empty");
+    });
+    vi.spyOn(discoveryService, "discoverInstances").mockResolvedValue([
+      { port: 4801, pid: 13, workspacePath: "/error" },
+    ]);
+
+    const picker = new InstanceQuickPick(instanceStore, discoveryService);
+    Reflect.set(picker, "controller", errorController);
+
+    await picker.show();
+    quickPicks[0].selectedItems = [quickPicks[0].items[0]];
+    await acceptHandlers[0]();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to connect: refused string",
+    );
+  });
+
   it("disconnects through the controller and reports disconnect errors", async () => {
     const controller = {
       connect: vi.fn(),
@@ -431,6 +505,37 @@ describe("InstanceQuickPick", () => {
 
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       "Failed to disconnect: disconnect failed",
+    );
+  });
+
+  it("ignores disconnect actions without a controller and stringifies disconnect failures", async () => {
+    vi.spyOn(instanceStore, "getAll").mockReturnValue([]);
+    vi.spyOn(instanceStore, "getActive").mockImplementation(() => {
+      throw new Error("empty");
+    });
+    vi.spyOn(discoveryService, "discoverInstances").mockResolvedValue([]);
+
+    await new InstanceQuickPick(instanceStore, discoveryService).show();
+    quickPicks[0].selectedItems = [
+      { label: "Disconnect", action: { type: "disconnect", instanceId: "active" } },
+    ];
+    await acceptHandlers[0]();
+
+    const controller = {
+      connect: vi.fn(),
+      disconnect: vi.fn().mockRejectedValue("disconnect string"),
+    };
+    const picker = new InstanceQuickPick(instanceStore, discoveryService);
+    Reflect.set(picker, "controller", controller);
+
+    await picker.show();
+    quickPicks[1].selectedItems = [
+      { label: "Disconnect", action: { type: "disconnect", instanceId: "active" } },
+    ];
+    await acceptHandlers[1]();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to disconnect: disconnect string",
     );
   });
 

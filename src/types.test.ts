@@ -6,7 +6,14 @@ import type {
   TmuxDashboardHostMessage,
   WebviewMessage,
 } from "./types";
-import { DEFAULT_AI_TOOLS, TMUX_RAW_ALLOWED_SUBCOMMANDS } from "./types";
+import {
+  DEFAULT_AI_TOOLS,
+  TMUX_RAW_ALLOWED_SUBCOMMANDS,
+  detectAiToolName,
+  getToolDetectionPatterns,
+  getToolLaunchCommand,
+  resolveAiToolConfigs,
+} from "./types";
 
 describe("Types", () => {
   describe("WebviewMessage", () => {
@@ -259,6 +266,87 @@ describe("Types", () => {
       };
 
       expect(message.type).toBe("focusTerminal");
+    });
+  });
+
+  describe("AI tool helpers", () => {
+    it("normalizes configured tools with default path, args, aliases, and operator", () => {
+      expect(
+        resolveAiToolConfigs([
+          null,
+          { name: "missing-label" },
+          {
+            name: "custom",
+            label: "Custom Tool",
+            path: 42,
+            args: ["run", 5],
+            aliases: "custom-alias",
+            operator: false,
+          },
+        ]),
+      ).toEqual([
+        {
+          name: "custom",
+          label: "Custom Tool",
+          path: "",
+          args: ["run", "5"],
+          aliases: undefined,
+          operator: undefined,
+        },
+      ]);
+
+      expect(
+        resolveAiToolConfigs([
+          {
+            name: "no-args-array",
+            label: "No Args Array",
+            args: "--bad",
+          },
+        ])[0].args,
+      ).toEqual([]);
+    });
+
+    it("builds launch commands and detection patterns from optional config fields", () => {
+      const tool = {
+        name: "assistant",
+        label: "Assistant CLI",
+        path: "C:\\Tools\\assistant.exe",
+        args: ["--print", "hello"],
+        aliases: ["helper"],
+        operator: "codex",
+      };
+
+      expect(getToolLaunchCommand(tool)).toBe(
+        "C:\\Tools\\assistant.exe --print hello",
+      );
+      expect(getToolDetectionPatterns(tool)).toEqual(
+        expect.arrayContaining([
+          "assistant",
+          "assistant.exe",
+          "codex",
+          "codex.exe",
+          "helper",
+          "helper.exe",
+          "Assistant CLI",
+        ]),
+      );
+    });
+
+    it("adds non-matching basenames and skips empty detection text", () => {
+      const tool = {
+        name: "assistant",
+        label: "Assistant CLI",
+        path: "/opt/bin/custom-assistant",
+        args: [],
+        aliases: undefined,
+        operator: undefined,
+      };
+
+      expect(getToolDetectionPatterns(tool)).toContain("custom-assistant");
+      expect(detectAiToolName(undefined, [tool])).toBeUndefined();
+      expect(detectAiToolName("run CUSTOM-ASSISTANT now", [tool])).toBe(
+        "assistant",
+      );
     });
   });
 });
