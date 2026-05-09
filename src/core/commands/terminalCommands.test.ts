@@ -330,6 +330,24 @@ describe("registerTerminalCommands", () => {
     expect(deps.provider?.focus).toHaveBeenCalledTimes(1);
   });
 
+  it("does not send all open files when no supported file refs exist", () => {
+    const deps = createDependencies();
+    vscode.window.tabGroups.all = [
+      {
+        tabs: [
+          { input: new vscode.TabInputText(vscode.Uri.parse("untitled:///scratch.ts")) },
+          { input: { uri: vscode.Uri.file("/workspace/not-tab-input.ts") } },
+        ],
+      },
+    ];
+
+    const commands = registerAndGetCommands(deps);
+    getCommand(commands, "opencodeTui.sendAllOpenFiles")();
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled();
+    expect(deps.getActiveTerminalId).not.toHaveBeenCalled();
+  });
+
   it("deduplicates queued file references and debounces prompt sending", () => {
     const deps = createDependencies();
     const firstUri = vscode.Uri.file("/workspace/a.ts");
@@ -365,6 +383,55 @@ describe("registerTerminalCommands", () => {
     vi.advanceTimersByTime(100);
 
     expect(deps.provider?.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores file sends without context sharing or usable uri arguments", () => {
+    const noContextDeps = createDependencies({ contextSharingService: undefined });
+    const noContextCommands = registerAndGetCommands(noContextDeps);
+    getCommand(noContextCommands, "opencodeTui.sendFileToTerminal")(
+      vscode.Uri.file("/workspace/a.ts"),
+    );
+    vi.advanceTimersByTime(100);
+
+    expect(noContextDeps.sendPrompt).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mockAutoFocusOnSend(true);
+
+    const invalidArgsDeps = createDependencies();
+    const invalidArgsCommands = registerAndGetCommands(invalidArgsDeps);
+    getCommand(invalidArgsCommands, "opencodeTui.sendFileToTerminal")("ignored");
+    getCommand(invalidArgsCommands, "opencodeTui.sendFileToTerminal")();
+    vi.advanceTimersByTime(100);
+
+    expect(invalidArgsDeps.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("accepts a direct uri argument for file sends", () => {
+    const deps = createDependencies();
+    vi.mocked(deps.provider!.formatUriReference).mockReturnValueOnce(
+      "@workspace/direct.ts",
+    );
+    const commands = registerAndGetCommands(deps);
+
+    getCommand(commands, "opencodeTui.sendFileToTerminal")(
+      vscode.Uri.file("/workspace/direct.ts"),
+    );
+    vi.advanceTimersByTime(100);
+
+    expect(deps.provider?.formatUriReference).toHaveBeenCalledTimes(1);
+    expect(deps.sendPrompt).toHaveBeenCalledWith("@workspace/direct.ts ");
+  });
+
+  it("ignores empty file send batches after the debounce fires", () => {
+    const deps = createDependencies();
+    const commands = registerAndGetCommands(deps);
+
+    getCommand(commands, "opencodeTui.sendFileToTerminal")([]);
+    vi.advanceTimersByTime(100);
+
+    expect(deps.provider?.formatUriReference).not.toHaveBeenCalled();
+    expect(deps.sendPrompt).not.toHaveBeenCalled();
   });
 
   it("drops queued file references when provider is unavailable", () => {
@@ -412,6 +479,32 @@ describe("registerTerminalCommands", () => {
     );
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       "Failed to paste from clipboard",
+    );
+
+    vi.clearAllMocks();
+    mockAutoFocusOnSend(true);
+
+    const noProviderDeps = createDependencies({ provider: undefined });
+    const noProviderCommands = registerAndGetCommands(noProviderDeps);
+    await getCommand(noProviderCommands, "opencodeTui.paste")();
+
+    expect(noProviderDeps.outputChannel?.error).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mockAutoFocusOnSend(true);
+
+    const stringErrorDeps = createDependencies();
+    vi.mocked(stringErrorDeps.provider!.requestPaste).mockImplementationOnce(
+      () => {
+        throw "paste failed";
+      },
+    );
+
+    const stringErrorCommands = registerAndGetCommands(stringErrorDeps);
+    await getCommand(stringErrorCommands, "opencodeTui.paste")();
+
+    expect(stringErrorDeps.outputChannel?.error).toHaveBeenCalledWith(
+      "[TerminalProvider] Failed to paste: paste failed",
     );
   });
 

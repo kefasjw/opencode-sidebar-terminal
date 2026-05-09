@@ -216,6 +216,48 @@ describe("registerTmuxSessionCommands", () => {
     dateNowSpy.mockRestore();
   });
 
+  it("creates a new window record without opening a folder when the active instance has no workspace", async () => {
+    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(24680);
+    const instanceStore = createInstanceStore([
+      {
+        config: {
+          id: "active",
+          label: "",
+        },
+        runtime: {},
+        state: "connected",
+      },
+    ]);
+
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore,
+      instanceController: undefined,
+      instanceQuickPick: undefined,
+      outputChannel: undefined,
+      tmuxManager: undefined,
+    });
+
+    await getCommandHandlers().openInNewWindow();
+
+    expect(instanceStore.get("24680")).toEqual({
+      config: {
+        id: "24680",
+        workspaceUri: undefined,
+        label: "OpenCode (New Window)",
+      },
+      runtime: {},
+      state: "disconnected",
+    });
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+      "vscode.openFolder",
+      expect.anything(),
+      true,
+    );
+
+    dateNowSpy.mockRestore();
+  });
+
   it("logs and shows errors when openInNewWindow fails", async () => {
     const outputChannel = createOutputChannel();
     const instanceStore = createInstanceStore();
@@ -239,6 +281,32 @@ describe("registerTmuxSessionCommands", () => {
     );
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
       "Failed to open in new window: boom",
+    );
+  });
+
+  it("stringifies non-Error openInNewWindow failures", async () => {
+    const outputChannel = createOutputChannel();
+    const instanceStore = createInstanceStore();
+    vi.spyOn(instanceStore, "getActive").mockImplementation(() => {
+      throw "boom-string";
+    });
+
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore,
+      instanceController: undefined,
+      instanceQuickPick: undefined,
+      outputChannel,
+      tmuxManager: undefined,
+    });
+
+    await getCommandHandlers().openInNewWindow();
+
+    expect(outputChannel.error).toHaveBeenCalledWith(
+      "Failed to open in new window: boom-string",
+    );
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to open in new window: boom-string",
     );
   });
 
@@ -312,6 +380,63 @@ describe("registerTmuxSessionCommands", () => {
     );
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       "Focused existing OpenCode for workspace: Reusable Workspace",
+    );
+  });
+
+  it("uses instance ids in workspace messages when labels are missing", async () => {
+    const reusableStore = createInstanceStore([
+      {
+        config: {
+          id: "existing-id",
+          workspaceUri: "file:///workspace/reused-id",
+        },
+        runtime: {},
+        state: "connected",
+      },
+    ]);
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore: reusableStore,
+      instanceController: createInstanceController(),
+      instanceQuickPick: undefined,
+      outputChannel: undefined,
+      tmuxManager: undefined,
+    });
+
+    await getCommandHandlers().spawnForWorkspace({
+      toString: () => "file:///workspace/reused-id",
+    });
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      "Focused existing OpenCode for workspace: existing-id",
+    );
+
+    vi.clearAllMocks();
+    const stoppedStore = createInstanceStore([
+      {
+        config: {
+          id: "stopped-id",
+          workspaceUri: "file:///workspace/stopped-id",
+        },
+        runtime: {},
+        state: "disconnected",
+      },
+    ]);
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore: stoppedStore,
+      instanceController: createInstanceController(),
+      instanceQuickPick: undefined,
+      outputChannel: undefined,
+      tmuxManager: undefined,
+    });
+
+    await getCommandHandlers().spawnForWorkspace({
+      toString: () => "file:///workspace/stopped-id",
+    });
+
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      "Spawned OpenCode for workspace: stopped-id",
     );
   });
 
@@ -442,6 +567,36 @@ describe("registerTmuxSessionCommands", () => {
     dateNowSpy.mockRestore();
   });
 
+  it("logs and shows string errors when spawnForWorkspace fails with a non-Error", async () => {
+    const outputChannel = createOutputChannel();
+    const instanceStore = createInstanceStore();
+    const instanceController = createInstanceController();
+    vi.mocked(instanceController.spawn).mockRejectedValue("spawn string failed");
+    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(90002);
+
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore,
+      instanceController,
+      instanceQuickPick: undefined,
+      outputChannel,
+      tmuxManager: undefined,
+    });
+
+    await getCommandHandlers().spawnForWorkspace({
+      toString: () => "file:///workspace/string-error",
+    });
+
+    expect(outputChannel.error).toHaveBeenCalledWith(
+      "Failed to spawn for workspace: spawn string failed",
+    );
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to spawn for workspace: spawn string failed",
+    );
+
+    dateNowSpy.mockRestore();
+  });
+
   it("shows the instance picker when selectInstance is invoked", () => {
     const instanceQuickPick = createInstanceQuickPick();
 
@@ -499,6 +654,25 @@ describe("registerTmuxSessionCommands", () => {
     expect(provider.killTmuxSession).not.toHaveBeenCalled();
   });
 
+  it("ignores provider-backed commands when provider is missing", async () => {
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore: undefined,
+      instanceController: undefined,
+      instanceQuickPick: undefined,
+      outputChannel: undefined,
+      tmuxManager: undefined,
+    });
+
+    const handlers = getCommandHandlers();
+    await handlers.switchTmuxSession("tmux-1");
+    await handlers.createTmuxSession();
+    await handlers.killTmuxSession("tmux-1");
+    await handlers.switchNativeShell();
+
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
   it("creates and kills tmux sessions through the provider", async () => {
     const provider = createProvider();
 
@@ -550,6 +724,73 @@ describe("registerTmuxSessionCommands", () => {
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
       "tmux is not available or the terminal provider is not initialized",
+    );
+  });
+
+  it("falls back to tmux browsing when active backend lookup throws", async () => {
+    const provider = createProvider();
+    const tmuxManager = createTmuxManager([
+      { id: "tmux-a", name: "alpha", workspace: "/alpha" },
+    ]);
+    const instanceStore = createInstanceStore([
+      {
+        config: { id: "instance-1", label: "Instance 1" },
+        runtime: {},
+        state: "connected",
+      },
+    ]);
+    const activeRecord = instanceStore.getActive();
+    vi.spyOn(instanceStore, "getActive")
+      .mockImplementationOnce(() => {
+        throw new Error("active missing");
+      })
+      .mockImplementation(() => activeRecord);
+    vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
+
+    registerTmuxSessionCommands({
+      provider,
+      instanceStore,
+      instanceController: undefined,
+      instanceQuickPick: undefined,
+      outputChannel: undefined,
+      tmuxManager,
+    });
+
+    await getCommandHandlers().browseTmuxSessions();
+
+    expect(tmuxManager.discoverSessions).toHaveBeenCalledTimes(1);
+    expect(vscode.window.showQuickPick).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        placeHolder: "Select a tmux session to attach",
+      }),
+    );
+  });
+
+  it("warns with zellij label when zellij is active but unavailable", async () => {
+    const provider = createProvider();
+    const instanceStore = createInstanceStore([
+      {
+        config: { id: "instance-1", label: "Instance 1" },
+        runtime: { terminalBackend: "zellij" },
+        state: "connected",
+      },
+    ]);
+
+    registerTmuxSessionCommands({
+      provider,
+      instanceStore,
+      instanceController: undefined,
+      instanceQuickPick: undefined,
+      outputChannel: undefined,
+      tmuxManager: createTmuxManager(),
+      zellijManager: undefined,
+    });
+
+    await getCommandHandlers().browseTmuxSessions();
+
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      "zellij is not available or the terminal provider is not initialized",
     );
   });
 
@@ -755,6 +996,58 @@ describe("registerTmuxSessionCommands", () => {
     );
   });
 
+  it("logs and shows string errors when browsing tmux sessions fails with a non-Error", async () => {
+    const provider = createProvider();
+    const outputChannel = createOutputChannel();
+    const tmuxManager = createTmuxManager();
+    vi.mocked(tmuxManager.discoverSessions).mockRejectedValue("tmux string failed");
+
+    registerTmuxSessionCommands({
+      provider,
+      instanceStore: undefined,
+      instanceController: undefined,
+      instanceQuickPick: undefined,
+      outputChannel,
+      tmuxManager,
+    });
+
+    await getCommandHandlers().browseTmuxSessions();
+
+    expect(outputChannel.error).toHaveBeenCalledWith(
+      "Failed to browse tmux sessions: tmux string failed",
+    );
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to browse tmux sessions: tmux string failed",
+    );
+  });
+
+  it("kills the only active native shell without selecting a replacement", async () => {
+    const instanceController = createInstanceController();
+    const instanceStore = createInstanceStore([
+      {
+        config: { id: "native-1", label: "Native One" },
+        runtime: {},
+        state: "connected",
+      },
+    ]);
+    const setActive = vi.spyOn(instanceStore, "setActive");
+
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore,
+      instanceController,
+      instanceQuickPick: undefined,
+      outputChannel: undefined,
+      tmuxManager: undefined,
+    });
+
+    await getCommandHandlers().killNativeShell("native-1");
+
+    expect(instanceController.kill).toHaveBeenCalledWith("native-1");
+    expect(instanceStore.getAll()).toEqual([]);
+    expect(setActive).not.toHaveBeenCalled();
+  });
+
   it("kills the active native shell, removes it, and activates the next instance", async () => {
     const instanceController = createInstanceController();
     const instanceStore = createInstanceStore([
@@ -859,6 +1152,34 @@ describe("registerTmuxSessionCommands", () => {
 
     expect(outputChannel.error).toHaveBeenCalledWith(
       "[killNativeShell] Failed to kill native shell native-1: kill failed",
+    );
+  });
+
+  it("logs string errors when killNativeShell fails with a non-Error", async () => {
+    const outputChannel = createOutputChannel();
+    const instanceController = createInstanceController();
+    vi.mocked(instanceController.kill).mockRejectedValue("kill string failed");
+    const instanceStore = createInstanceStore([
+      {
+        config: { id: "native-1", label: "Native One" },
+        runtime: {},
+        state: "connected",
+      },
+    ]);
+
+    registerTmuxSessionCommands({
+      provider: undefined,
+      instanceStore,
+      instanceController,
+      instanceQuickPick: undefined,
+      outputChannel,
+      tmuxManager: undefined,
+    });
+
+    await getCommandHandlers().killNativeShell("native-1");
+
+    expect(outputChannel.error).toHaveBeenCalledWith(
+      "[killNativeShell] Failed to kill native shell native-1: kill string failed",
     );
   });
 });

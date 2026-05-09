@@ -502,6 +502,14 @@ describe("registerTmuxPaneCommands", () => {
     expect(harness.sendTextToPane).toHaveBeenLastCalledWith("%1", "pwd");
   });
 
+  it("returns early when sending text without a focused session", async () => {
+    const harness = createHarness({ sessionId: undefined });
+
+    await getHandler(harness, "opencodeTui.tmuxSendTextToPane")();
+
+    expect(harness.sendTextToPane).not.toHaveBeenCalled();
+  });
+
   it("resizes panes across cancel, validation, success, and error branches", async () => {
     const harness = createHarness();
     const handler = getHandler(harness, "opencodeTui.tmuxResizePane");
@@ -576,6 +584,17 @@ describe("registerTmuxPaneCommands", () => {
     );
   });
 
+  it("returns early for direct swap pane when there are no targets or target pick is cancelled", async () => {
+    const singlePaneHarness = createHarness({ panes: [defaultPanes[0]] });
+    await getHandler(singlePaneHarness, "opencodeTui.tmuxSwapPane")({ paneId: "%1" });
+    expect(singlePaneHarness.swapPanes).not.toHaveBeenCalled();
+
+    const harness = createHarness();
+    mockQuickPickOnce(undefined);
+    await getHandler(harness, "opencodeTui.tmuxSwapPane")({ paneId: "%1" });
+    expect(harness.swapPanes).not.toHaveBeenCalled();
+  });
+
   it("kills panes with last-pane prevention, destructive confirmation, cancellation, and error handling", async () => {
     const multiPaneHarness = createHarness();
     const handler = getHandler(multiPaneHarness, "opencodeTui.tmuxKillPane");
@@ -612,6 +631,24 @@ describe("registerTmuxPaneCommands", () => {
 
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
       "Cannot kill the last pane — use 'Kill Session' instead",
+    );
+  });
+
+  it("handles quick-pick kill pane confirmation cancellation and errors", async () => {
+    const harness = createHarness();
+    const handler = getHandler(harness, "opencodeTui.tmuxKillPane");
+
+    mockQuickPickOnce(panePick("%2", "Pane 1: shell", "%2"));
+    mockWarningOnce("Cancel");
+    await handler();
+    expect(harness.killPane).not.toHaveBeenCalled();
+
+    mockQuickPickOnce(panePick("%2", "Pane 1: shell", "%2"));
+    mockWarningOnce("Kill");
+    harness.killPane.mockRejectedValueOnce(new Error("kill failed"));
+    await handler();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to kill pane",
     );
   });
 
@@ -768,6 +805,143 @@ describe("registerTmuxPaneCommands", () => {
     expect(harness.resizePane).toHaveBeenCalledWith("left", 4);
   });
 
+  it("lists zellij panes for quick-pick switching and maps focused state into tmux pane items", async () => {
+    const harness = createZellijHarness({
+      panes: [
+        { id: "terminal_1", title: "editor", isFocused: false, isFloating: false },
+        { id: "terminal_2", title: "shell", isFocused: true, isFloating: false },
+      ],
+    });
+    mockQuickPickOnce(
+      panePick("terminal_2", "$(check) Pane 1: shell", "terminal_2"),
+    );
+
+    await getHandler(harness, "opencodeTui.tmuxSwitchPane")();
+
+    expect(harness.listPanes).toHaveBeenCalledTimes(1);
+    expect(harness.selectPane).toHaveBeenCalledWith("terminal_2");
+    const items = vi.mocked(vscode.window.showQuickPick).mock.calls[0]?.[0] as Array<{
+      label: string;
+      paneId: string;
+    }>;
+    expect(items).toEqual([
+      { label: "Pane 0: editor", description: "terminal_1", paneId: "terminal_1" },
+      {
+        label: "$(check) Pane 1: shell",
+        description: "terminal_2",
+        paneId: "terminal_2",
+      },
+    ]);
+  });
+
+  it("falls back to the first zellij pane as focused context and handles missing zellij session context", async () => {
+    const harness = createZellijHarness({
+      panes: [
+        { id: "terminal_1", title: "editor", isFocused: false, isFloating: false },
+      ],
+    });
+
+    await getHandler(harness, "opencodeTui.tmuxSplitPaneV")({ sessionId: "zellij-1" });
+
+    expect(harness.selectPane).toHaveBeenCalledWith("terminal_1");
+    expect(harness.splitPane).toHaveBeenCalledWith("v", {
+      workingDirectory: "/test/workspace",
+    });
+
+    const noSessionHarness = createZellijHarness({ sessionId: undefined });
+    await getHandler(noSessionHarness, "opencodeTui.tmuxSplitPaneH")();
+    expect(noSessionHarness.splitPane).not.toHaveBeenCalled();
+  });
+
+  it("returns early when focused zellij or tmux context cannot resolve panes", async () => {
+    const emptyZellijHarness = createZellijHarness({ panes: [] });
+    await getHandler(emptyZellijHarness, "opencodeTui.tmuxSplitPaneH")();
+    expect(emptyZellijHarness.splitPane).not.toHaveBeenCalled();
+
+    const failingZellijHarness = createZellijHarness();
+    failingZellijHarness.listPanes.mockRejectedValueOnce(new Error("list failed"));
+    await getHandler(failingZellijHarness, "opencodeTui.tmuxSplitPaneH")();
+    expect(failingZellijHarness.splitPane).not.toHaveBeenCalled();
+
+    const emptyTmuxHarness = createHarness({ panes: [] });
+    emptyTmuxHarness.deps.resolveActiveTmuxFocus = vi.fn(async () => undefined);
+    await getHandler(emptyTmuxHarness, "opencodeTui.tmuxSplitPaneH")();
+    expect(emptyTmuxHarness.splitPane).not.toHaveBeenCalled();
+
+    const failingTmuxHarness = createHarness();
+    failingTmuxHarness.deps.resolveActiveTmuxFocus = vi.fn(async () => undefined);
+    failingTmuxHarness.listPanes.mockRejectedValueOnce(new Error("list failed"));
+    await getHandler(failingTmuxHarness, "opencodeTui.tmuxSplitPaneH")();
+    expect(failingTmuxHarness.splitPane).not.toHaveBeenCalled();
+  });
+
+  it("falls back to tmux when active backend lookup throws", async () => {
+    const harness = createHarness();
+    const instanceStore = new InstanceStore();
+    vi.spyOn(instanceStore, "getActive").mockImplementation(() => {
+      throw new Error("active missing");
+    });
+    harness.deps.instanceStore = instanceStore;
+
+    await getHandler(harness, "opencodeTui.tmuxSwitchPane")({ paneId: "%2" });
+
+    expect(harness.selectPane).toHaveBeenCalledWith("%2");
+  });
+
+  it("returns no zellij session id when zellij runtime lookup throws", async () => {
+    const harness = createZellijHarness();
+    const record: Parameters<InstanceStore["upsert"]>[0] = {
+      config: { id: "instance-throw", label: "Throwing Instance" },
+      runtime: { terminalBackend: "zellij", zellijSessionId: "zellij-throw" },
+      state: "connected",
+    };
+    vi.spyOn(harness.deps.instanceStore!, "getActive")
+      .mockImplementationOnce(() => record)
+      .mockImplementationOnce(() => {
+        throw new Error("session missing");
+      });
+
+    await getHandler(harness, "opencodeTui.tmuxSplitPaneH")();
+
+    expect(harness.splitPane).not.toHaveBeenCalled();
+  });
+
+  it("covers resize direction variants and default fallback", async () => {
+    const harness = createHarness();
+    const handler = getHandler(harness, "opencodeTui.tmuxResizePane");
+
+    mockQuickPickOnce("Right");
+    mockInputBoxOnce("6");
+    await handler({ paneId: "%2" });
+
+    mockQuickPickOnce("Diagonal");
+    mockInputBoxOnce("8");
+    await handler({ paneId: "%2" });
+
+    expect(harness.resizePane).toHaveBeenNthCalledWith(1, "%2", "R", 6);
+    expect(harness.resizePane).toHaveBeenNthCalledWith(2, "%2", "D", 8);
+  });
+
+  it("no-ops helper-backed commands when the pane manager is unavailable", async () => {
+    const harness = createHarness();
+    harness.deps.tmuxManager = undefined;
+
+    await getHandler(harness, "opencodeTui.tmuxSplitPaneH")({
+      paneId: "%1",
+      sessionId: "session-1",
+    });
+    await getHandler(harness, "opencodeTui.tmuxResizePane")({ paneId: "%1" });
+    await getHandler(harness, "opencodeTui.tmuxKillWindow")({ windowId: "@1" });
+    await getHandler(harness, "opencodeTui.tmuxSelectWindow")({ windowId: "@1" });
+    await getHandler(harness, "opencodeTui.tmuxKillPane")({ paneId: "%1" });
+
+    expect(harness.splitPane).not.toHaveBeenCalled();
+    expect(harness.resizePane).not.toHaveBeenCalled();
+    expect(harness.killWindow).not.toHaveBeenCalled();
+    expect(harness.selectWindow).not.toHaveBeenCalled();
+    expect(harness.killPane).not.toHaveBeenCalled();
+  });
+
   it("routes zellij tab and session commands and disables swap", async () => {
     const harness = createZellijHarness();
 
@@ -800,6 +974,248 @@ describe("registerTmuxPaneCommands", () => {
     mockWarningOnce("Kill");
     await getHandler(harness, "opencodeTui.tmuxKillSession")();
     expect(harness.killSession).toHaveBeenCalledWith("zellij-1");
+  });
+
+  it("kills zellij panes by selecting the target pane before kill", async () => {
+    const harness = createZellijHarness();
+    mockWarningOnce("Kill");
+
+    await getHandler(harness, "opencodeTui.tmuxKillPane")({
+      paneId: "terminal_2",
+    });
+
+    expect(harness.selectPane).toHaveBeenCalledWith("terminal_2");
+    expect(harness.killPane).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns early for zellij kill pane when no active session exists", async () => {
+    const harness = createZellijHarness({ sessionId: undefined });
+
+    await getHandler(harness, "opencodeTui.tmuxKillPane")({
+      paneId: "terminal_2",
+    });
+
+    expect(harness.killPane).not.toHaveBeenCalled();
+  });
+
+  it("covers tmux no-manager, no-session, and helper early-return branches", async () => {
+    const noManager = createHarness();
+    noManager.deps.tmuxManager = undefined;
+
+    await getHandler(noManager, "opencodeTui.tmuxSwitchPane")({ paneId: "%1" });
+    await getHandler(noManager, "opencodeTui.tmuxSplitPaneV")({
+      paneId: "%1",
+      sessionId: "session-1",
+    });
+    await getHandler(noManager, "opencodeTui.tmuxSplitPaneWithCommand")({
+      paneId: "%1",
+      sessionId: "session-1",
+    });
+    await getHandler(noManager, "opencodeTui.tmuxSendTextToPane")({ paneId: "%1" });
+    await getHandler(noManager, "opencodeTui.tmuxSwapPane")({ paneId: "%1" });
+    await getHandler(noManager, "opencodeTui.tmuxPrevWindow")();
+    await getHandler(noManager, "opencodeTui.tmuxCreateWindow")();
+    await getHandler(noManager, "opencodeTui.tmuxKillSession")({
+      sessionId: "session-1",
+    });
+
+    expect(noManager.selectPane).not.toHaveBeenCalled();
+    expect(noManager.splitPane).not.toHaveBeenCalled();
+    expect(noManager.sendTextToPane).not.toHaveBeenCalled();
+    expect(noManager.swapPanes).not.toHaveBeenCalled();
+    expect(noManager.prevWindow).not.toHaveBeenCalled();
+    expect(noManager.createWindow).not.toHaveBeenCalled();
+    expect(noManager.killSession).not.toHaveBeenCalled();
+
+    const noSession = createHarness({ sessionId: undefined });
+    await getHandler(noSession, "opencodeTui.tmuxSwitchPane")();
+    await getHandler(noSession, "opencodeTui.tmuxSwapPane")({ paneId: "%1" });
+    await getHandler(noSession, "opencodeTui.tmuxKillWindow")({ windowId: "@1" });
+    await getHandler(noSession, "opencodeTui.tmuxSelectWindow")({ windowId: "@1" });
+    expect(noSession.selectPane).not.toHaveBeenCalled();
+    expect(noSession.swapPanes).not.toHaveBeenCalled();
+    expect(noSession.killWindow).not.toHaveBeenCalled();
+    expect(noSession.selectWindow).not.toHaveBeenCalled();
+
+    const splitHelper = createHarness();
+    vi.mocked(splitHelper.deps.resolveWorkspacePath).mockImplementation(() => {
+      splitHelper.deps.tmuxManager = undefined;
+      return "/test/workspace";
+    });
+    await getHandler(splitHelper, "opencodeTui.tmuxSplitPaneH")({
+      paneId: "%1",
+      sessionId: "session-1",
+    });
+    expect(splitHelper.splitPane).not.toHaveBeenCalled();
+
+    const sendPick = createHarness();
+    sendPick.deps.resolveActiveTmuxFocus = vi.fn(async () => {
+      sendPick.deps.tmuxManager = undefined;
+      return { sessionId: "session-1", windowId: "@1", paneId: "%1" };
+    });
+    await getHandler(sendPick, "opencodeTui.tmuxSendTextToPane")();
+    expect(sendPick.sendTextToPane).not.toHaveBeenCalled();
+
+    const resizeHelper = createHarness();
+    mockQuickPickOnce("Left");
+    vi.mocked(vscode.window.showInputBox).mockImplementationOnce(async () => {
+      resizeHelper.deps.tmuxManager = undefined;
+      return "3";
+    });
+    await getHandler(resizeHelper, "opencodeTui.tmuxResizePane")({ paneId: "%1" });
+    expect(resizeHelper.resizePane).not.toHaveBeenCalled();
+
+    const listWindowHelper = createHarness();
+    listWindowHelper.deps.resolveActiveTmuxFocus = vi.fn(async () => {
+      listWindowHelper.deps.tmuxManager = undefined;
+      return { sessionId: "session-1", windowId: "@1", paneId: "%1" };
+    });
+    await getHandler(listWindowHelper, "opencodeTui.tmuxKillWindow")();
+    await getHandler(listWindowHelper, "opencodeTui.tmuxSelectWindow")();
+    expect(listWindowHelper.killWindow).not.toHaveBeenCalled();
+    expect(listWindowHelper.selectWindow).not.toHaveBeenCalled();
+  });
+
+  it("covers focused fallback, empty-title picks, and remaining command error branches", async () => {
+    const noActivePane = createHarness({
+      panes: [{ paneId: "%3", index: 2, title: "", isActive: false }],
+    });
+    noActivePane.deps.resolveActiveTmuxFocus = vi.fn(async () => undefined);
+    await getHandler(noActivePane, "opencodeTui.tmuxSplitPaneH")();
+    expect(noActivePane.splitPane).toHaveBeenCalledWith("%3", "h", {
+      workingDirectory: "/test/workspace",
+    });
+
+    const emptyTmux = createHarness({ panes: [] });
+    emptyTmux.deps.resolveActiveTmuxFocus = vi.fn(async () => undefined);
+    mockInputBoxOnce("npm test");
+    await getHandler(emptyTmux, "opencodeTui.tmuxSplitPaneWithCommand")({
+      sessionId: "session-1",
+    });
+    expect(emptyTmux.splitPane).not.toHaveBeenCalled();
+
+    const emptyTitleSwitch = createHarness({
+      panes: [{ paneId: "%4", index: 4, title: "", isActive: true }],
+    });
+    mockQuickPickOnce(panePick("%4", "$(check) Pane 4", "%4"));
+    await getHandler(emptyTitleSwitch, "opencodeTui.tmuxSwitchPane")();
+    const quickPickCalls = vi.mocked(vscode.window.showQuickPick).mock.calls;
+    const emptyTitleItems = quickPickCalls[quickPickCalls.length - 1]?.[0] as Array<{
+      label: string;
+      description: string;
+      paneId: string;
+    }>;
+    expect(emptyTitleItems[0]).toEqual({
+      label: "$(check) Pane 4",
+      description: "%4",
+      paneId: "%4",
+    });
+
+    const splitHError = createHarness();
+    splitHError.splitPane.mockRejectedValueOnce(new Error("boom"));
+    await getHandler(splitHError, "opencodeTui.tmuxSplitPaneH")({
+      paneId: "%1",
+      sessionId: "session-1",
+    });
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to split pane",
+    );
+
+    const resizeNoSession = createHarness({ sessionId: undefined });
+    await getHandler(resizeNoSession, "opencodeTui.tmuxResizePane")();
+    expect(resizeNoSession.resizePane).not.toHaveBeenCalled();
+    mockQuickPickOnce(undefined);
+    await getHandler(resizeNoSession, "opencodeTui.tmuxResizePane")({ paneId: "%1" });
+    expect(resizeNoSession.resizePane).not.toHaveBeenCalled();
+
+    const resizeNoManagerAfterPick = createHarness();
+    mockQuickPickOnce(panePick("%1", "Pane 0", "%1"));
+    mockQuickPickOnce("Right");
+    vi.mocked(vscode.window.showInputBox).mockImplementationOnce(async () => {
+      resizeNoManagerAfterPick.deps.tmuxManager = undefined;
+      return "2";
+    });
+    await getHandler(resizeNoManagerAfterPick, "opencodeTui.tmuxResizePane")();
+    expect(resizeNoManagerAfterPick.resizePane).not.toHaveBeenCalled();
+
+    const sourceSwapError = createHarness();
+    mockQuickPickOnce(panePick("%1", "Pane 0", "%1"));
+    mockQuickPickOnce(panePick("%2", "Pane 1", "%2"));
+    sourceSwapError.swapPanes.mockRejectedValueOnce(new Error("boom"));
+    await getHandler(sourceSwapError, "opencodeTui.tmuxSwapPane")();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      "Failed to swap panes",
+    );
+  });
+
+  it("covers remaining no-session and helper mutation branches", async () => {
+    const zellijThrow = createZellijHarness();
+    const activeRecord: Parameters<InstanceStore["upsert"]>[0] = {
+      config: { id: "instance-throw", label: "Throwing Instance" },
+      runtime: { terminalBackend: "zellij", zellijSessionId: "zellij-1" },
+      state: "connected",
+    };
+    vi.spyOn(zellijThrow.deps.instanceStore!, "getActive")
+      .mockImplementationOnce(() => activeRecord)
+      .mockImplementationOnce(() => activeRecord)
+      .mockImplementationOnce(() => {
+        throw new Error("missing active runtime");
+      });
+    await getHandler(zellijThrow, "opencodeTui.tmuxKillSession")();
+    expect(zellijThrow.killSession).not.toHaveBeenCalled();
+
+    const selectHelper = createHarness();
+    selectHelper.deps.resolveActiveTmuxFocus = vi.fn(async () => {
+      selectHelper.deps.tmuxManager = undefined;
+      return { sessionId: "session-1", windowId: "@1", paneId: "%1" };
+    });
+    await getHandler(selectHelper, "opencodeTui.tmuxSelectWindow")({ windowId: "@1" });
+    expect(selectHelper.selectWindow).not.toHaveBeenCalled();
+
+    const killHelper = createHarness();
+    killHelper.deps.resolveActiveTmuxFocus = vi.fn(async () => {
+      killHelper.deps.tmuxManager = undefined;
+      return { sessionId: "session-1", windowId: "@1", paneId: "%1" };
+    });
+    mockWarningOnce("Kill");
+    await getHandler(killHelper, "opencodeTui.tmuxKillWindow")({ windowId: "@1" });
+    expect(killHelper.killWindow).not.toHaveBeenCalled();
+
+    const sendTextCancelledAfterPick = createHarness();
+    mockQuickPickOnce(panePick("%1", "Pane 0", "%1"));
+    mockInputBoxOnce(undefined);
+    await getHandler(sendTextCancelledAfterPick, "opencodeTui.tmuxSendTextToPane")();
+    expect(sendTextCancelledAfterPick.sendTextToPane).not.toHaveBeenCalled();
+  });
+
+  it("covers zellij unavailable-manager and resize direction branches", async () => {
+    const noZellijManager = createZellijHarness();
+    noZellijManager.deps.zellijManager = undefined;
+    await getHandler(noZellijManager, "opencodeTui.tmuxSwitchPane")({
+      paneId: "terminal_1",
+    });
+    expect(noZellijManager.selectPane).not.toHaveBeenCalled();
+
+    const harness = createZellijHarness();
+    mockQuickPickOnce("Right");
+    mockInputBoxOnce("2");
+    await getHandler(harness, "opencodeTui.tmuxResizePane")({
+      paneId: "terminal_1",
+    });
+    mockQuickPickOnce("Up");
+    mockInputBoxOnce("3");
+    await getHandler(harness, "opencodeTui.tmuxResizePane")({
+      paneId: "terminal_1",
+    });
+    mockQuickPickOnce("Down");
+    mockInputBoxOnce("4");
+    await getHandler(harness, "opencodeTui.tmuxResizePane")({
+      paneId: "terminal_1",
+    });
+
+    expect(harness.resizePane).toHaveBeenCalledWith("right", 2);
+    expect(harness.resizePane).toHaveBeenCalledWith("up", 3);
+    expect(harness.resizePane).toHaveBeenCalledWith("down", 4);
   });
 
   it("no-ops pane commands for native backend", async () => {

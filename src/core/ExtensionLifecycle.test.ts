@@ -7,6 +7,7 @@ import { InstanceRegistry } from "../services/InstanceRegistry";
 import { InstanceStore } from "../services/InstanceStore";
 import { OpenCodeApiClient } from "../services/OpenCodeApiClient";
 import { TmuxSessionManager } from "../services/TmuxSessionManager";
+import { ZellijSessionManager } from "../services/ZellijSessionManager";
 import type * as vscodeTypes from "../test/mocks/vscode";
 
 const vscode = await vi.importActual<typeof vscodeTypes>(
@@ -96,12 +97,78 @@ describe("ExtensionLifecycle", () => {
       ).not.toHaveBeenCalledWith("opencodeTui.tmuxSessions", expect.anything());
     });
 
+    it("should log unavailable terminal backends and continue activation", async () => {
+      vi.spyOn(TmuxSessionManager.prototype, "isAvailable").mockResolvedValue(
+        false,
+      );
+      vi.spyOn(ZellijSessionManager.prototype, "isAvailable").mockResolvedValue(
+        false,
+      );
+
+      await lifecycle.activate(mockContext);
+
+      const outputChannel = vi.mocked(vscode.window.createOutputChannel).mock
+        .results[0].value;
+      expect(outputChannel.info).toHaveBeenCalledWith(
+        expect.stringContaining("tmux not detected"),
+      );
+      expect(outputChannel.info).toHaveBeenCalledWith(
+        expect.stringContaining("zellij not detected"),
+      );
+    });
+
+    it("should swallow duplicate webview provider registration races", async () => {
+      vi.mocked(vscode.window.registerWebviewViewProvider).mockImplementation(
+        () => {
+          throw new Error("provider already registered for opencodeTui");
+        },
+      );
+
+      await lifecycle.activate(mockContext);
+
+      const outputChannel = vi.mocked(vscode.window.createOutputChannel).mock
+        .results[0].value;
+      expect(outputChannel.warn).toHaveBeenCalledWith(
+        expect.stringContaining("provider already registered"),
+      );
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    });
+
     it("should register commands", async () => {
       await lifecycle.activate(mockContext);
 
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
         "opencodeTui.start",
         expect.any(Function),
+      );
+    });
+
+    it("should skip duplicate activation attempts", async () => {
+      await lifecycle.activate(mockContext);
+      const registrationCount = vi.mocked(vscode.window.registerWebviewViewProvider)
+        .mock.calls.length;
+
+      await lifecycle.activate(mockContext);
+
+      const outputChannel = vi.mocked(vscode.window.createOutputChannel).mock
+        .results[0].value;
+      expect(outputChannel.warn).toHaveBeenCalledWith(
+        expect.stringContaining("activate() called while already active"),
+      );
+      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalledTimes(
+        registrationCount,
+      );
+    });
+
+    it("should register zellij as available when detected", async () => {
+      vi.spyOn(ZellijSessionManager.prototype, "isAvailable").mockResolvedValue(
+        true,
+      );
+
+      await lifecycle.activate(mockContext);
+
+      expect(Reflect.get(lifecycle, "zellijSessionManager")).toBeInstanceOf(
+        ZellijSessionManager,
       );
     });
 
@@ -134,6 +201,29 @@ describe("ExtensionLifecycle", () => {
           providedCodeActionKinds: expect.any(Array),
         }),
       );
+    });
+
+    it("should route Explain and Fix diagnostics through the lifecycle prompt callback", async () => {
+      const sendPrompt = vi.fn().mockResolvedValue(undefined);
+      Reflect.set(lifecycle, "sendPromptToOpenCode", sendPrompt);
+
+      await lifecycle.activate(mockContext);
+
+      const explainAndFix = getRegisteredCommandHandler<
+        (args: { diagnostic: unknown; documentUri: string }) => Promise<void>
+      >("opencodeTui.explainAndFix");
+
+      await explainAndFix({
+        diagnostic: {
+          message: "Broken",
+          severity: vscode.DiagnosticSeverity.Error,
+          range: vscode.Range(0, 0, 0, 6),
+          source: "ts",
+        },
+        documentUri: "file:///workspace/file.ts",
+      });
+
+      expect(sendPrompt).toHaveBeenCalled();
     });
 
     it("should hydrate the instance registry and wire terminal close cleanup", async () => {
@@ -197,6 +287,20 @@ describe("ExtensionLifecycle", () => {
         expect.stringContaining("Failed to activate"),
       );
     });
+
+    it("should stringify non-error activation failures", async () => {
+      vi.mocked(vscode.window.registerWebviewViewProvider).mockImplementation(
+        () => {
+          throw "Registration failed as string";
+        },
+      );
+
+      await lifecycle.activate(mockContext);
+
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Registration failed as string"),
+      );
+    });
   });
 
   describe("deactivate", () => {
@@ -232,6 +336,7 @@ describe("ExtensionLifecycle", () => {
       const instanceDiscoveryService = { dispose: vi.fn() };
       const instanceRegistry = { dispose: vi.fn() };
       const terminalDashboardProvider = { dispose: vi.fn() };
+      const tuiProviderRegistration = { dispose: vi.fn() };
 
       Reflect.set(lifecycle, "outputChannelService", logger);
       Reflect.set(lifecycle, "tuiProvider", tuiProvider);
@@ -249,6 +354,7 @@ describe("ExtensionLifecycle", () => {
         "terminalDashboardProvider",
         terminalDashboardProvider,
       );
+      Reflect.set(lifecycle, "tuiProviderRegistration", tuiProviderRegistration);
 
       await lifecycle.deactivate();
 
@@ -260,6 +366,7 @@ describe("ExtensionLifecycle", () => {
       expect(instanceDiscoveryService.dispose).toHaveBeenCalledTimes(1);
       expect(instanceRegistry.dispose).toHaveBeenCalledTimes(1);
       expect(terminalDashboardProvider.dispose).toHaveBeenCalledTimes(1);
+      expect(tuiProviderRegistration.dispose).toHaveBeenCalledTimes(1);
       expect(Reflect.get(lifecycle, "tuiProvider")).toBeUndefined();
       expect(Reflect.get(lifecycle, "terminalManager")).toBeUndefined();
       expect(Reflect.get(lifecycle, "outputChannelService")).toBeUndefined();
@@ -272,6 +379,7 @@ describe("ExtensionLifecycle", () => {
       expect(
         Reflect.get(lifecycle, "terminalDashboardProvider"),
       ).toBeUndefined();
+      expect(Reflect.get(lifecycle, "tuiProviderRegistration")).toBeUndefined();
       expect(logger.info).toHaveBeenLastCalledWith(
         "Open Sidebar TUI deactivated",
       );
@@ -282,6 +390,10 @@ describe("ExtensionLifecycle", () => {
     it("should expose live command dependencies and helper closures", async () => {
       const provider = { sendPrompt: vi.fn().mockResolvedValue(undefined) };
       const tmuxSessionManager = { kind: "tmux" };
+      const zellijSessionManager = { kind: "zellij" };
+      const focusTmuxManager = {
+        getActiveFocus: vi.fn().mockResolvedValue({ paneId: "%1" }),
+      };
       const terminalManager = { kind: "terminal" };
       const contextSharingService = { kind: "share" };
       const contextManager = { kind: "context" };
@@ -301,6 +413,7 @@ describe("ExtensionLifecycle", () => {
 
       Reflect.set(lifecycle, "tuiProvider", provider);
       Reflect.set(lifecycle, "tmuxSessionManager", tmuxSessionManager);
+      Reflect.set(lifecycle, "zellijSessionManager", zellijSessionManager);
       Reflect.set(lifecycle, "terminalManager", terminalManager);
       Reflect.set(lifecycle, "contextSharingService", contextSharingService);
       Reflect.set(lifecycle, "contextManager", contextManager);
@@ -313,6 +426,7 @@ describe("ExtensionLifecycle", () => {
 
       expect(deps.provider).toBe(provider);
       expect(deps.tmuxManager).toBe(tmuxSessionManager);
+      expect(deps.zellijManager).toBe(zellijSessionManager);
       expect(deps.terminalManager).toBe(terminalManager);
       expect(deps.contextSharingService).toBe(contextSharingService);
       expect(deps.contextManager).toBe(contextManager);
@@ -324,11 +438,26 @@ describe("ExtensionLifecycle", () => {
       deps.sendTerminalCwd();
       await deps.sendPrompt("hello");
       expect(deps.resolveActiveTmuxSessionId()).toBe("tmux-42");
+      Reflect.set(lifecycle, "tmuxSessionManager", focusTmuxManager);
+      await expect(deps.resolveActiveTmuxFocus()).resolves.toEqual({
+        paneId: "%1",
+      });
+      Reflect.set(lifecycle, "tmuxSessionManager", undefined);
+      await expect(deps.resolveActiveTmuxFocus()).resolves.toBeUndefined();
+      Reflect.set(lifecycle, "tuiProvider", undefined);
+      await expect(deps.sendPrompt("without provider")).resolves.toBeUndefined();
+      vscode.workspace.workspaceFolders = [
+        { uri: { fsPath: "/repo" } },
+      ] as never;
+      expect(deps.resolveWorkspacePath()).toBe("/repo");
+      vscode.workspace.workspaceFolders = undefined;
+      expect(deps.resolveWorkspacePath()).toBeUndefined();
 
       expect(getActiveTerminalIdSpy).toHaveBeenCalledTimes(1);
       expect(sendTerminalCwdSpy).toHaveBeenCalledTimes(1);
       expect(provider.sendPrompt).toHaveBeenCalledWith("hello");
       expect(resolveActiveTmuxSessionIdSpy).toHaveBeenCalledTimes(1);
+      expect(focusTmuxManager.getActiveFocus).toHaveBeenCalledTimes(1);
     });
 
     it("should resolve the active terminal id from runtime terminal key", () => {
@@ -385,11 +514,42 @@ describe("ExtensionLifecycle", () => {
       );
     });
 
+    it("should stringify non-error active terminal id resolution failures", () => {
+      const error = vi.fn();
+      Reflect.set(lifecycle, "outputChannelService", { error });
+      Reflect.set(lifecycle, "instanceStore", {
+        getActive: vi.fn(() => {
+          throw "string boom";
+        }),
+      });
+
+      expect((lifecycle as any).getActiveTerminalId()).toBe("opencode-main");
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("ERROR: string boom"),
+      );
+    });
+
     it("should return undefined when resolving the active tmux session id throws", () => {
       Reflect.set(lifecycle, "instanceStore", {
         getActive: vi.fn(() => {
           throw new Error("broken store");
         }),
+      });
+
+      expect((lifecycle as any).resolveActiveTmuxSessionId()).toBeUndefined();
+    });
+
+    it("should resolve active tmux session ids from the active instance", () => {
+      Reflect.set(lifecycle, "instanceStore", {
+        getActive: vi.fn(() => ({ runtime: { tmuxSessionId: "tmux-active" } })),
+      });
+
+      expect((lifecycle as any).resolveActiveTmuxSessionId()).toBe(
+        "tmux-active",
+      );
+
+      Reflect.set(lifecycle, "instanceStore", {
+        getActive: vi.fn(() => undefined),
       });
 
       expect((lifecycle as any).resolveActiveTmuxSessionId()).toBeUndefined();
@@ -447,6 +607,25 @@ describe("ExtensionLifecycle", () => {
         expect.stringContaining(
           "Failed to send prompt via discovered instance",
         ),
+      );
+    });
+
+    it("should stringify non-error discovered instance forwarding failures", async () => {
+      const warn = vi.fn();
+      vi.spyOn(OpenCodeApiClient.prototype, "appendPrompt").mockRejectedValue(
+        "offline string",
+      );
+      Reflect.set(lifecycle, "outputChannelService", { warn });
+      Reflect.set(lifecycle, "instanceDiscoveryService", {
+        discoverInstances: vi.fn().mockResolvedValue([{ port: 9998 }]),
+      });
+
+      await expect(
+        (lifecycle as any).trySendPromptViaDiscoveredInstance("hello"),
+      ).resolves.toBe(false);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("offline string"),
       );
     });
   });
@@ -541,6 +720,38 @@ describe("ExtensionLifecycle", () => {
 
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("falling back to terminal input"),
+      );
+      expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
+        "opencode-main",
+        "hello\n",
+      );
+    });
+
+    it("should stringify non-error HTTP append failures and skip non-callable focus", async () => {
+      vi.useFakeTimers();
+
+      const warn = vi.fn();
+      const provider = {
+        getApiClient: vi.fn(() => ({
+          appendPrompt: vi.fn().mockRejectedValue("http string down"),
+        })),
+        isHttpAvailable: vi.fn(() => true),
+        focus: "not callable",
+      };
+      const terminalManager = {
+        getTerminal: vi.fn(() => ({ id: "terminal" })),
+        writeToTerminal: vi.fn(),
+      };
+
+      Reflect.set(lifecycle, "tuiProvider", provider);
+      Reflect.set(lifecycle, "terminalManager", terminalManager);
+      Reflect.set(lifecycle, "outputChannelService", { warn });
+
+      await (lifecycle as any).sendPromptToOpenCode("hello");
+      await vi.runAllTimersAsync();
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("http string down"),
       );
       expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
         "opencode-main",
@@ -648,6 +859,26 @@ describe("ExtensionLifecycle", () => {
         "@/tmp/project ",
       );
     });
+
+    it("should not focus a provider without a callable focus method", async () => {
+      vi.useFakeTimers();
+
+      const terminalManager = { writeToTerminal: vi.fn() };
+      vscode.window.activeTerminal = {
+        shellIntegration: { cwd: { fsPath: "/tmp/project" } },
+      };
+      vscode.workspace.workspaceFolders = undefined;
+      Reflect.set(lifecycle, "terminalManager", terminalManager);
+      Reflect.set(lifecycle, "tuiProvider", {});
+
+      (lifecycle as any).sendTerminalCwd();
+      await vi.runAllTimersAsync();
+
+      expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
+        "opencode-main",
+        "@/tmp/project ",
+      );
+    });
   });
 
   describe("tmux shutdown prompt", () => {
@@ -707,6 +938,45 @@ describe("ExtensionLifecycle", () => {
 
       expect(killTmuxSession).toHaveBeenCalledWith("instance-session");
       expect(tmuxManager.killSession).toHaveBeenCalledWith("external-session");
+    });
+
+    it("should kill sessions through the manager when no instance store is available", async () => {
+      const tmuxManager = {
+        discoverSessions: vi.fn().mockResolvedValue([{ id: "external-session" }]),
+        killSession: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+        "Kill Sessions" as never,
+      );
+      Reflect.set(lifecycle, "tmuxSessionManager", tmuxManager);
+      Reflect.set(lifecycle, "instanceStore", undefined);
+
+      await (lifecycle as any).promptKillTmuxSessions();
+
+      expect(tmuxManager.killSession).toHaveBeenCalledWith("external-session");
+    });
+
+    it("should safely resolve instance-backed shutdown without a provider", async () => {
+      const tmuxManager = {
+        discoverSessions: vi.fn().mockResolvedValue([{ id: "instance-session" }]),
+        killSession: vi.fn().mockResolvedValue(undefined),
+      };
+      const instanceStore = new InstanceStore();
+      instanceStore.upsert({
+        config: { id: "instance-1", label: "OpenCode" },
+        runtime: { tmuxSessionId: "instance-session" },
+        state: "connected",
+      });
+      vi.mocked(vscode.window.showWarningMessage).mockResolvedValue(
+        "Kill Sessions" as never,
+      );
+      Reflect.set(lifecycle, "tmuxSessionManager", tmuxManager);
+      Reflect.set(lifecycle, "instanceStore", instanceStore);
+      Reflect.set(lifecycle, "tuiProvider", undefined);
+
+      await (lifecycle as any).promptKillTmuxSessions();
+
+      expect(tmuxManager.killSession).not.toHaveBeenCalled();
     });
   });
 

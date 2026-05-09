@@ -227,6 +227,7 @@ describe("dashboardCommands", () => {
     vi.mocked(noProviderDeps.tmuxManager!.discoverSessions).mockResolvedValue(
       [],
     );
+    vscode.workspace.workspaceFolders = [] as typeof vscode.workspace.workspaceFolders;
     vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(
       harness.panel as never,
     );
@@ -314,6 +315,27 @@ describe("dashboardCommands", () => {
         },
       ],
     });
+
+    vscode.workspace.workspaceFolders = [] as typeof vscode.workspace.workspaceFolders;
+    await dashboardInternals.updateDashboardWebview(webview, deps);
+    expect(webview.postMessage).toHaveBeenLastCalledWith({
+      type: "updateDashboard",
+      workspace: "No workspace",
+      sessions: [
+        {
+          id: "tmux-1",
+          name: "Alpha",
+          workspace: "/workspace/demo",
+          isActive: true,
+        },
+        {
+          id: "tmux-2",
+          name: "Beta",
+          workspace: "/workspace/other",
+          isActive: false,
+        },
+      ],
+    });
   });
 
   it("handles missing tmux manager and update failures gracefully", async () => {
@@ -356,6 +378,25 @@ describe("dashboardCommands", () => {
     expect(actualDeps.outputChannel?.error).toHaveBeenCalledWith(
       "[Dashboard] Failed to update: cannot discover",
     );
+
+    vi.clearAllMocks();
+
+    const stringErrorHarness = createPanelHarness();
+    const stringErrorDeps = createDependencies();
+    vi.mocked(stringErrorDeps.tmuxManager!.discoverSessions).mockRejectedValue(
+      "string failure",
+    );
+    vi.mocked(vscode.window.createWebviewPanel).mockReturnValue(
+      stringErrorHarness.panel as never,
+    );
+
+    registerDashboardCommands(stringErrorDeps);
+    getRegisteredCommand("opencodeTui.openDashboardInEditor")();
+    await flushAsyncWork();
+
+    expect(stringErrorDeps.outputChannel?.error).toHaveBeenCalledWith(
+      "[Dashboard] Failed to update: string failure",
+    );
   });
 
   it("creates a dashboard editor webview and handles dashboard actions", async () => {
@@ -373,6 +414,9 @@ describe("dashboardCommands", () => {
         isActive: true,
       },
     ]);
+    vscode.workspace.workspaceFolders = [
+      { uri: { fsPath: "/workspace/demo" }, name: "demo", index: 0 },
+    ] as typeof vscode.workspace.workspaceFolders;
 
     registerDashboardCommands(deps);
     getRegisteredCommand("opencodeTui.openDashboardInEditor")();
@@ -399,7 +443,7 @@ describe("dashboardCommands", () => {
           isActive: true,
         },
       ],
-      workspace: "No workspace",
+      workspace: "demo",
     });
 
     vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
@@ -410,6 +454,11 @@ describe("dashboardCommands", () => {
     await harness.dispatchMessage({ type: "killSession", sessionId: "s-1" });
     await harness.dispatchMessage({ type: "killSession" });
     await harness.dispatchMessage({ type: "create" });
+
+    const originalTmuxManager = deps.tmuxManager;
+    deps.tmuxManager = undefined;
+    await harness.dispatchMessage({ type: "refresh" });
+    deps.tmuxManager = originalTmuxManager;
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       "opencodeTui.switchTmuxSession",
