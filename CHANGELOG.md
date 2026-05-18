@@ -5,6 +5,33 @@ All notable changes to the "Open Sidebar TUI" extension will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-05-18
+
+### Added
+
+- Add multi-backend terminal support with `native`, `tmux`, and `zellij` backend selection.
+- Add native terminal backend support with ask-first AI tool selection.
+- Add `opencodeTui.terminalBackend` setting for choosing the terminal backend.
+- Add `opencodeTui.sendKeybindingsToShell` so terminal-focused Ctrl/Cmd shortcuts can be passed through to the TUI.
+
+### Changed
+
+- Change `opencodeTui.autoStartOnOpen` default to `false` so users can choose which AI tool to launch when opening the sidebar.
+- Rename dashboard command labels to `Open Terminal Managers` for clearer VS Code command palette and menu wording.
+- Improve Windows compatibility and terminal UX around shell handling, paths, clipboard behavior, and terminal focus.
+- Expand automated test coverage across core commands, providers, services, terminals, webview keyboard handling, and VS Code mocks.
+
+### Fixed
+
+- Fix Shift+Enter newline handling in the sidebar terminal.
+- Fix editor title actions so `Open Terminal in Editor` and `Open Terminal Managers` only appear after the extension is fully active.
+- Fix package repository URL metadata by removing the leading whitespace.
+
+### Security
+
+- Update dependency lockfile entries for `postcss`, `fast-uri`, `brace-expansion`, `ajv`, and `serialize-javascript`.
+- Add a `serialize-javascript` override to force `^7.0.5`.
+
 ## [1.4.1] - 2026-03-03
 
 ### Fixed
