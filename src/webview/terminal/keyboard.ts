@@ -15,6 +15,7 @@ export interface KeyboardHandlerOptions {
    * When omitted, Shift+Enter is not intercepted.
    */
   sendInput?: (data: string) => void;
+  requestPaste?: () => void;
   /**
    * When true, send workbench primary modifier chords (Ctrl/Cmd + letter/digit)
    * to the sidebar terminal's PTY instead of suppressing them for the IDE.
@@ -75,8 +76,11 @@ export function createKeyboardHandler(options: KeyboardHandlerOptions = {}) {
       return true;
     }
 
-    if (isPasteShortcut(event)) {
-      return true;
+    if (isPasteShortcut(event) && event.type === "keydown") {
+      event.preventDefault();
+      event.stopPropagation();
+      options.requestPaste?.();
+      return false;
     }
 
     if (isWorkbenchPrimaryModifier(event)) {
