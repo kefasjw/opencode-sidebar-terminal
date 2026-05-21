@@ -1481,6 +1481,183 @@ describe("TerminalProvider", () => {
     });
   });
 
+  it("queues forced AI selector messages until the terminal webview resolves", () => {
+    mockConfiguration({ defaultAiTool: "opencode" });
+    const instanceStore = new InstanceStore();
+    instanceStore.upsert({
+      config: {
+        id: "workspace-pending-selector",
+        workspaceUri: "file:///workspaces/repo-pending-selector",
+        selectedAiTool: "codex",
+      },
+      runtime: {
+        terminalKey: "workspace-pending-selector",
+        tmuxSessionId: "tmux-pending-selector",
+      },
+      state: "connected",
+    });
+
+    provider = createProvider({ instanceStore });
+    const launchSpy = vi.spyOn(provider, "launchAiTool").mockResolvedValue();
+
+    provider.showAiToolSelector(
+      "repo-pending-selector",
+      "Repo Pending Selector",
+      true,
+      "%4",
+    );
+
+    expect(launchSpy).not.toHaveBeenCalled();
+
+    const { view } = resolveProvider(provider);
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "showAiToolSelector",
+      sessionId: "tmux-pending-selector",
+      sessionName: "Repo Pending Selector",
+      defaultTool: undefined,
+      tools: DEFAULT_AI_TOOLS,
+      targetPaneId: "%4",
+    });
+  });
+
+  it("requeues AI selector messages when postMessage reports the webview hidden", async () => {
+    mockConfiguration({ defaultAiTool: "opencode" });
+    const instanceStore = new InstanceStore();
+    instanceStore.upsert({
+      config: {
+        id: "workspace-hidden-selector",
+        workspaceUri: "file:///workspaces/repo-hidden-selector",
+        selectedAiTool: "codex",
+      },
+      runtime: {
+        terminalKey: "workspace-hidden-selector",
+        tmuxSessionId: "tmux-hidden-selector",
+      },
+      state: "connected",
+    });
+
+    provider = createProvider({ instanceStore });
+    const launchSpy = vi.spyOn(provider, "launchAiTool").mockResolvedValue();
+    const { view } = resolveProvider(provider);
+    const selectorMessage = {
+      type: "showAiToolSelector",
+      sessionId: "tmux-hidden-selector",
+      sessionName: "Repo Hidden Selector",
+      defaultTool: undefined,
+      tools: DEFAULT_AI_TOOLS,
+      targetPaneId: "%5",
+    };
+    vi.mocked(view.webview.postMessage).mockClear();
+    vi.mocked(view.webview.postMessage)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+
+    provider.showAiToolSelector(
+      "repo-hidden-selector",
+      "Repo Hidden Selector",
+      true,
+      "%5",
+    );
+
+    expect(launchSpy).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(selectorMessage);
+
+    const visibilityListener = vi.mocked(view.onDidChangeVisibility).mock
+      .calls[0]?.[0] as (() => void) | undefined;
+    expect(visibilityListener).toBeDefined();
+    view.visible = true;
+    visibilityListener?.();
+    await Promise.resolve();
+
+    expect(view.webview.postMessage).toHaveBeenCalledTimes(2);
+    expect(view.webview.postMessage).toHaveBeenLastCalledWith(selectorMessage);
+  });
+
+  it("routes AI tool launches to tmux when an instance is tmux mapped", async () => {
+    mockConfiguration();
+    const instanceStore = new InstanceStore();
+    instanceStore.upsert({
+      config: {
+        id: "workspace-tmux-launch-route",
+        workspaceUri: "file:///workspaces/repo-tmux-launch-route",
+      },
+      runtime: {
+        terminalKey: "workspace-tmux-launch-route",
+        tmuxSessionId: "tmux-session-x",
+      },
+      state: "connected",
+    });
+    const listPanes = vi
+      .fn()
+      .mockResolvedValue([{ paneId: "%42", isActive: true }]);
+    const sendTextToPane = vi.fn().mockResolvedValue(undefined);
+    const tmuxSessionManager = {
+      listPanes,
+      sendTextToPane,
+    } as unknown as TmuxSessionManager;
+    const zellijSessionManager = {
+      switchSession: vi.fn(),
+      selectPane: vi.fn(),
+      sendTextToPane: vi.fn(),
+    } as any;
+
+    provider = createProvider({
+      instanceStore,
+      tmuxSessionManager,
+      zellijSessionManager,
+    });
+
+    await provider.launchAiTool("tmux-session-x", "codex", false, "%42");
+
+    expect(sendTextToPane).toHaveBeenCalledWith("%42", "codex");
+    expect(zellijSessionManager.switchSession).not.toHaveBeenCalled();
+    expect(zellijSessionManager.selectPane).not.toHaveBeenCalled();
+    expect(zellijSessionManager.sendTextToPane).not.toHaveBeenCalled();
+  });
+
+  it("switches to the target zellij session before launching into a pane", async () => {
+    mockConfiguration();
+    const instanceStore = new InstanceStore();
+    instanceStore.upsert({
+      config: {
+        id: "workspace-zellij-launch-route",
+        workspaceUri: "file:///workspaces/repo-zellij-launch-route",
+      },
+      runtime: {
+        terminalKey: "workspace-zellij-launch-route",
+        zellijSessionId: "zellij-target",
+      },
+      state: "connected",
+    });
+    const switchSession = vi.fn().mockResolvedValue(undefined);
+    const selectPane = vi.fn().mockResolvedValue(undefined);
+    const sendTextToPane = vi.fn().mockResolvedValue(undefined);
+    const zellijSessionManager = {
+      isAvailable: vi.fn().mockResolvedValue(true),
+      switchSession,
+      selectPane,
+      sendTextToPane,
+    } as any;
+
+    provider = createProvider({ instanceStore, zellijSessionManager });
+    vi.spyOn((provider as any).sessionRuntime, "getActiveBackend").mockReturnValue("zellij");
+
+    await provider.launchAiTool("zellij-target", "opencode", false, "pane-7");
+
+    expect(switchSession).toHaveBeenCalledWith("zellij-target");
+    expect(selectPane).toHaveBeenCalledWith("pane-7");
+    expect(sendTextToPane).toHaveBeenCalledWith("opencode -c", {
+      submit: true,
+    });
+    expect(switchSession.mock.invocationCallOrder[0]).toBeLessThan(
+      selectPane.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(switchSession.mock.invocationCallOrder[0]).toBeLessThan(
+      sendTextToPane.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
   it("launches AI tools against the normalized tmux session and active pane", async () => {
     const configuration = mockConfiguration();
     const instanceStore = new InstanceStore();

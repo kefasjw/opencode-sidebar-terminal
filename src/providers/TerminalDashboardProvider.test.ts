@@ -450,8 +450,9 @@ describe("TerminalDashboardProvider", () => {
     });
     const splitPane = vi.mocked(tmuxSessionManager.splitPane);
     splitPane.mockResolvedValue("%8");
-    const { messageHandler } = resolveProvider(provider);
+    const { view, messageHandler } = resolveProvider(provider);
     await flushPromises();
+    vi.mocked(view.webview.postMessage).mockClear();
 
     await messageHandler({
       action: "splitPane",
@@ -850,8 +851,9 @@ describe("TerminalDashboardProvider", () => {
       instanceStore,
     });
 
-    const { messageHandler } = resolveProvider(provider);
+    const { view, messageHandler } = resolveProvider(provider);
     await flushPromises();
+    vi.mocked(view.webview.postMessage).mockClear();
     vi.mocked(vscode.commands.executeCommand).mockClear();
 
     await messageHandler({
@@ -888,8 +890,9 @@ describe("TerminalDashboardProvider", () => {
       terminalProvider,
     });
 
-    const { messageHandler } = resolveProvider(provider);
+    const { view, messageHandler } = resolveProvider(provider);
     await flushPromises();
+    vi.mocked(view.webview.postMessage).mockClear();
 
     await messageHandler({ action: "createWindow", sessionId: "repo-a" });
     await messageHandler({ action: "nextWindow", sessionId: "repo-a" });
@@ -1002,8 +1005,9 @@ describe("TerminalDashboardProvider", () => {
       terminalProvider,
     });
 
-    const { messageHandler } = resolveProvider(provider);
+    const { view, messageHandler } = resolveProvider(provider);
     await flushPromises();
+    vi.mocked(view.webview.postMessage).mockClear();
 
     await messageHandler({ action: "activate", sessionId: "repo-a" });
     await messageHandler({ action: "createWindow", sessionId: "repo-a" });
@@ -1084,8 +1088,9 @@ describe("TerminalDashboardProvider", () => {
       terminalProvider,
     });
 
-    const { messageHandler } = resolveProvider(provider);
+    const { view, messageHandler } = resolveProvider(provider);
     await flushPromises();
+    vi.mocked(view.webview.postMessage).mockClear();
 
     await messageHandler({
       action: "showAiToolSelector",
@@ -1098,23 +1103,26 @@ describe("TerminalDashboardProvider", () => {
       sessionName: "Repo A",
     });
 
-    expect(showAiToolSelector).toHaveBeenNthCalledWith(
+    expect(showAiToolSelector).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenNthCalledWith(
       1,
-      "repo-a",
-      "Repo A",
-      true,
-      "%9",
+      expect.objectContaining({
+        type: "showAiToolSelector",
+        sessionId: "repo-a",
+        targetPaneId: "%9",
+      }),
     );
-    expect(showAiToolSelector).toHaveBeenNthCalledWith(
+    expect(view.webview.postMessage).toHaveBeenNthCalledWith(
       2,
-      "repo-a",
-      "Repo A",
-      true,
-      undefined,
+      expect.objectContaining({
+        type: "showAiToolSelector",
+        sessionId: "repo-a",
+        targetPaneId: undefined,
+      }),
     );
   });
 
-  it("delegates AI selector display directly to TerminalProvider when available", async () => {
+  it("falls back to TerminalProvider for selector display before the dashboard webview resolves", async () => {
     const terminalProvider = {
       showAiToolSelector: vi.fn(),
       launchAiTool: vi.fn(),
@@ -1609,8 +1617,9 @@ describe("TerminalDashboardProvider", () => {
       terminalProvider,
     });
 
-    const { messageHandler } = resolveProvider(provider);
+    const { view, messageHandler } = resolveProvider(provider);
     await flushPromises();
+    vi.mocked(view.webview.postMessage).mockClear();
     await messageHandler({
       action: "showAiToolSelector",
       sessionId: "zellij-a",
@@ -1624,11 +1633,13 @@ describe("TerminalDashboardProvider", () => {
       targetPaneId: "terminal_2",
     });
 
-    expect(terminalProvider.showAiToolSelector).toHaveBeenCalledWith(
-      "zellij-a",
-      "Zellij A",
-      true,
-      "terminal_2",
+    expect(terminalProvider.showAiToolSelector).not.toHaveBeenCalled();
+    expect(view.webview.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "showAiToolSelector",
+        sessionId: "zellij-a",
+        targetPaneId: "terminal_2",
+      }),
     );
     expect(terminalProvider.launchAiTool).toHaveBeenCalledWith(
       "zellij-a",

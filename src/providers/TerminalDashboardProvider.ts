@@ -774,6 +774,24 @@ export class TerminalDashboardProvider
     forceShow = false,
     targetPaneId?: string,
   ): Promise<void> {
+    const webview = this.getActiveWebview();
+    if (webview) {
+      const config = vscode.workspace.getConfiguration("opencodeTui");
+      const tools: AiToolConfig[] = resolveAiToolConfigs(
+        config.get("aiTools", []),
+      );
+
+      await webview.postMessage({
+        type: "showAiToolSelector",
+        sessionId,
+        sessionName,
+        defaultTool: undefined,
+        tools,
+        targetPaneId,
+      } satisfies TmuxDashboardHostMessage);
+      return;
+    }
+
     if (this.terminalProvider) {
       this.terminalProvider.showAiToolSelector(
         sessionId,
@@ -783,25 +801,6 @@ export class TerminalDashboardProvider
       );
       return;
     }
-
-    const webview = this.getActiveWebview();
-    if (!webview) {
-      return;
-    }
-
-    const config = vscode.workspace.getConfiguration("opencodeTui");
-    const tools: AiToolConfig[] = resolveAiToolConfigs(
-      config.get("aiTools", []),
-    );
-
-    await webview.postMessage({
-      type: "showAiToolSelector",
-      sessionId,
-      sessionName,
-      defaultTool: undefined,
-      tools,
-      targetPaneId,
-    } satisfies TmuxDashboardHostMessage);
   }
 
   /**
