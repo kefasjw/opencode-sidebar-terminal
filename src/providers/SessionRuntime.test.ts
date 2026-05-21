@@ -800,6 +800,127 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
       );
     });
 
+    it("does not show AI tool selector on startOpenCode for newly created tmux session", async () => {
+      setConfiguration({
+        terminalBackend: "tmux" satisfies TerminalBackendType,
+        defaultAiTool: "opencode",
+        aiTools: [{ name: "opencode", label: "OpenCode", path: "", args: [] }],
+      });
+      upsertInstance({ workspaceUri: "file:///workspace/project-a" });
+      vi.mocked(mockTmuxSessionManager.ensureSession).mockResolvedValue({
+        action: "created" as const,
+        session: {
+          id: "project-a",
+          name: "project-a",
+          workspace: "/workspace/project-a",
+          isActive: true,
+        },
+      });
+      vi.mocked(mockTmuxSessionManager.listPanes).mockResolvedValue([
+        { paneId: "%1", isActive: true },
+      ] as unknown as Awaited<ReturnType<TmuxSessionManager["listPanes"]>>);
+      vi.mocked(mockAiToolRegistry.getForConfig).mockReturnValue({
+        getLaunchCommand: vi.fn(() => "opencode"),
+        supportsHttpApi: vi.fn(() => false),
+      } as never);
+
+      await sessionRuntime.startOpenCode();
+
+      expect(showAiToolSelectorMock).not.toHaveBeenCalled();
+    });
+
+    it("shows AI tool selector on startOpenCode when attaching to existing tmux session", async () => {
+      setConfiguration({
+        terminalBackend: "tmux" satisfies TerminalBackendType,
+        defaultAiTool: "opencode",
+        aiTools: [{ name: "opencode", label: "OpenCode", path: "", args: [] }],
+      });
+      upsertInstance({ workspaceUri: "file:///workspace/project-a" });
+      vi.mocked(mockTmuxSessionManager.ensureSession).mockResolvedValue({
+        action: "attached" as const,
+        session: {
+          id: "existing-session",
+          name: "existing-session",
+          workspace: "/workspace/project-a",
+          isActive: true,
+        },
+      });
+      vi.spyOn(
+        sessionRuntime as unknown as {
+          startExternalChangeMonitoring: (sessionId: string) => Promise<void>;
+        },
+        "startExternalChangeMonitoring",
+      ).mockResolvedValue();
+      vi.mocked(mockAiToolRegistry.getForConfig).mockReturnValue({
+        getLaunchCommand: vi.fn(() => "opencode"),
+        supportsHttpApi: vi.fn(() => false),
+      } as never);
+
+      await sessionRuntime.startOpenCode();
+
+      expect(showAiToolSelectorMock).toHaveBeenCalledWith(
+        "existing-session",
+        "existing-session",
+        true,
+      );
+    });
+
+    it("does not show AI tool selector on startOpenCode when promptAiToolOnSession is disabled", async () => {
+      setConfiguration({
+        terminalBackend: "tmux" satisfies TerminalBackendType,
+        defaultAiTool: "opencode",
+        aiTools: [{ name: "opencode", label: "OpenCode", path: "", args: [] }],
+        promptAiToolOnSession: false,
+      });
+      upsertInstance({ workspaceUri: "file:///workspace/project-a" });
+      vi.mocked(mockTmuxSessionManager.ensureSession).mockResolvedValue({
+        action: "attached" as const,
+        session: {
+          id: "existing-session",
+          name: "existing-session",
+          workspace: "/workspace/project-a",
+          isActive: true,
+        },
+      });
+      vi.spyOn(
+        sessionRuntime as unknown as {
+          startExternalChangeMonitoring: (sessionId: string) => Promise<void>;
+        },
+        "startExternalChangeMonitoring",
+      ).mockResolvedValue();
+      vi.mocked(mockAiToolRegistry.getForConfig).mockReturnValue({
+        getLaunchCommand: vi.fn(() => "opencode"),
+        supportsHttpApi: vi.fn(() => false),
+      } as never);
+
+      await sessionRuntime.startOpenCode();
+
+      expect(showAiToolSelectorMock).not.toHaveBeenCalled();
+    });
+
+    it("does not show duplicate AI tool selector when switching tmux sessions via command palette", async () => {
+      upsertInstance({ workspaceUri: "file:///workspace/project-a" });
+      vi.spyOn(
+        sessionRuntime as unknown as {
+          startExternalChangeMonitoring: (sessionId: string) => Promise<void>;
+        },
+        "startExternalChangeMonitoring",
+      ).mockResolvedValue();
+      vi.mocked(mockAiToolRegistry.getForConfig).mockReturnValue({
+        getLaunchCommand: vi.fn(() => "opencode"),
+        supportsHttpApi: vi.fn(() => false),
+      } as never);
+
+      await sessionRuntime.switchToTmuxSession("manual-tmux");
+
+      expect(showAiToolSelectorMock).toHaveBeenCalledTimes(1);
+      expect(showAiToolSelectorMock).toHaveBeenCalledWith(
+        "manual-tmux",
+        "manual-tmux",
+        true,
+      );
+    });
+
     it("prompts for an AI tool after a user attaches a tmux session", async () => {
       upsertInstance({ workspaceUri: "file:///workspace/project-a" });
       vi.spyOn(

@@ -466,11 +466,18 @@ export class SessionRuntime {
         }
       }
 
+      const wasTmuxCreatedForStartup =
+        !!tmuxSessionId &&
+        this.tmuxSessionsCreatedForStartup.has(tmuxSessionId);
+
       await this.launchToolInCreatedTmuxSession(
         tmuxSessionId,
         command,
         port,
       );
+
+      const wasManualSessionSelection =
+        !!this.selectedTmuxSessionId || !!this.selectedZellijSessionId;
 
       this.selectedTmuxSessionId = undefined;
       this.selectedZellijSessionId = undefined;
@@ -558,9 +565,39 @@ export class SessionRuntime {
         );
         this.httpAvailable = false;
       }
+
+      this.maybeShowAiToolSelectorOnExistingSession(
+        tmuxSessionId,
+        zellijSessionId,
+        wasTmuxCreatedForStartup,
+        wasManualSessionSelection,
+      );
     } finally {
       this.isStarting = false;
     }
+  }
+
+  private maybeShowAiToolSelectorOnExistingSession(
+    tmuxSessionId: string | undefined,
+    zellijSessionId: string | undefined,
+    wasTmuxCreatedForStartup: boolean,
+    wasManualSessionSelection: boolean,
+  ): void {
+    const sessionId = tmuxSessionId ?? zellijSessionId;
+    if (!sessionId) {
+      return;
+    }
+    if (tmuxSessionId && wasTmuxCreatedForStartup) {
+      return;
+    }
+    if (wasManualSessionSelection) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration("opencodeTui");
+    if (!config.get<boolean>("promptAiToolOnSession", true)) {
+      return;
+    }
+    this.callbacks.showAiToolSelector(sessionId, sessionId, true);
   }
 
   public restart(): void {
