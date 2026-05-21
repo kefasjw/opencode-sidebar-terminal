@@ -449,7 +449,7 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
       } as Awaited<ReturnType<TmuxSessionManager["findSessionForWorkspace"]>>);
 
       const switchSpy = vi
-        .spyOn(sessionRuntime, "switchToTmuxSession")
+        .spyOn(sessionRuntime, "switchToTmuxSessionWithTool")
         .mockResolvedValue();
 
       sessionRuntime.reconnectListeners();
@@ -797,6 +797,24 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
         undefined,
         "default",
         "/workspace/project-a",
+      );
+    });
+
+    it("prompts for an AI tool after a user attaches a tmux session", async () => {
+      upsertInstance({ workspaceUri: "file:///workspace/project-a" });
+      vi.spyOn(
+        sessionRuntime as unknown as {
+          startExternalChangeMonitoring: (sessionId: string) => Promise<void>;
+        },
+        "startExternalChangeMonitoring",
+      ).mockResolvedValue();
+
+      await sessionRuntime.switchToTmuxSession("manual-tmux");
+
+      expect(showAiToolSelectorMock).toHaveBeenCalledWith(
+        "manual-tmux",
+        "manual-tmux",
+        true,
       );
     });
 
@@ -1648,7 +1666,9 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
         "project-a-3",
         "/workspace/project-a",
       );
-      expect(switchSpy).toHaveBeenCalledWith("project-a-3");
+      expect(switchSpy).toHaveBeenCalledWith("project-a-3", undefined, {
+        forceToolPrompt: true,
+      });
     });
 
     it("zooms the active pane", async () => {
@@ -1709,7 +1729,7 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
       } as Awaited<ReturnType<TmuxSessionManager["findSessionForWorkspace"]>>);
 
       const switchSpy = vi
-        .spyOn(sessionRuntime, "switchToTmuxSession")
+        .spyOn(sessionRuntime, "switchToTmuxSessionWithTool")
         .mockResolvedValue();
 
       await sessionRuntime.killTmuxSession("workspace-session");
@@ -1720,7 +1740,9 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
       expect(
         instanceStore.get("default")?.runtime.tmuxSessionId,
       ).toBeUndefined();
-      expect(switchSpy).toHaveBeenCalledWith("replacement-session");
+      expect(switchSpy).toHaveBeenCalledWith("replacement-session", undefined, {
+        forceToolPrompt: true,
+      });
       expect(mockPortManager.releaseTerminalPorts).toHaveBeenCalledWith(
         "default",
       );
@@ -2868,7 +2890,7 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
         },
       });
       const switchSpy = vi
-        .spyOn(sessionRuntime, "switchToTmuxSession")
+        .spyOn(sessionRuntime, "switchToTmuxSessionWithTool")
         .mockResolvedValue();
 
       await sessionRuntime.selectTerminalBackend("tmux");

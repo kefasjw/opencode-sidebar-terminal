@@ -166,7 +166,7 @@ export class SessionRuntime {
     if (resolved === "tmux") {
       const sessionId = await this.ensureTmuxBackendSession();
       if (sessionId) {
-        await this.switchToTmuxSession(sessionId);
+        await this.switchToTmuxSessionWithTool(sessionId);
         return;
       }
       void vscode.window.showWarningMessage(
@@ -660,7 +660,7 @@ export class SessionRuntime {
         : undefined;
 
       if (replacementSessionId) {
-        await this.switchToTmuxSession(replacementSessionId);
+        await this.switchToTmuxSessionWithTool(replacementSessionId);
         return;
       }
 
@@ -1033,12 +1033,15 @@ export class SessionRuntime {
   }
 
   public async switchToTmuxSession(sessionId: string): Promise<void> {
-    await this.switchToTmuxSessionWithTool(sessionId);
+    await this.switchToTmuxSessionWithTool(sessionId, undefined, {
+      forceToolPrompt: true,
+    });
   }
 
   public async switchToTmuxSessionWithTool(
     sessionId: string,
     preferredToolName?: string,
+    options: { forceToolPrompt?: boolean } = {},
   ): Promise<void> {
     this.forceNativeShellNextStart = false;
     this.pendingBackendOverride = "tmux";
@@ -1078,6 +1081,9 @@ export class SessionRuntime {
       },
     );
     this.notifyActiveSession(sessionId);
+    if (options.forceToolPrompt && !preferredToolName) {
+      this.callbacks.showAiToolSelector(sessionId, sessionId, true);
+    }
   }
 
   public async switchToZellijSession(sessionId: string): Promise<void> {
@@ -1162,7 +1168,9 @@ export class SessionRuntime {
       }
 
       await this.tmuxSessionManager.createSession(candidate, workspacePath);
-      await this.switchToTmuxSessionWithTool(candidate);
+      await this.switchToTmuxSessionWithTool(candidate, undefined, {
+        forceToolPrompt: true,
+      });
 
       return candidate;
     } catch (error) {
