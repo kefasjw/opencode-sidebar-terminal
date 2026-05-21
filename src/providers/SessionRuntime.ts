@@ -556,6 +556,13 @@ export class SessionRuntime {
         this.activeBackend,
       );
 
+      this.maybeShowAiToolSelectorOnExistingSession(
+        tmuxSessionId,
+        zellijSessionId,
+        wasTmuxCreatedForStartup,
+        wasManualSessionSelection,
+      );
+
       if (enableHttpApi && port) {
         this.apiClient = new OpenCodeApiClient(port, 10, 200, httpTimeout);
         await this.pollForHttpReadiness();
@@ -565,13 +572,6 @@ export class SessionRuntime {
         );
         this.httpAvailable = false;
       }
-
-      this.maybeShowAiToolSelectorOnExistingSession(
-        tmuxSessionId,
-        zellijSessionId,
-        wasTmuxCreatedForStartup,
-        wasManualSessionSelection,
-      );
     } finally {
       this.isStarting = false;
     }
