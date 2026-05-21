@@ -1119,15 +1119,10 @@ export class SessionRuntime {
       const instanceId = this.resolveInstanceIdFromSessionId(sessionId);
       this.persistSelectedTool(preferredToolName, instanceId);
     }
-    await this.switchToInstance(
-      this.resolveInstanceIdFromSessionId(sessionId),
-      {
-        forceRestart: true,
-        preferredToolName,
-      },
-    );
-    this.notifyActiveSession(sessionId);
-    if (options.forceToolPrompt && !preferredToolName) {
+
+    const shouldShowSelector =
+      options.forceToolPrompt && !preferredToolName;
+    if (shouldShowSelector) {
       const config = vscode.workspace.getConfiguration("opencodeTui");
       if (
         !options.respectPromptAiToolOnSession ||
@@ -1136,6 +1131,15 @@ export class SessionRuntime {
         this.callbacks.showAiToolSelector(sessionId, sessionId, true);
       }
     }
+
+    await this.switchToInstance(
+      this.resolveInstanceIdFromSessionId(sessionId),
+      {
+        forceRestart: true,
+        preferredToolName,
+      },
+    );
+    this.notifyActiveSession(sessionId);
   }
 
   public async switchToZellijSession(sessionId: string): Promise<void> {
