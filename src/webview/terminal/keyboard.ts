@@ -16,6 +16,8 @@ export interface KeyboardHandlerOptions {
    */
   sendInput?: (data: string) => void;
   requestPaste?: () => void;
+  hasSelection?: () => boolean;
+  copySelection?: () => void;
   /**
    * When true, send workbench primary modifier chords (Ctrl/Cmd + letter/digit)
    * to the sidebar terminal's PTY instead of suppressing them for the IDE.
@@ -35,6 +37,9 @@ export function createKeyboardHandler(options: KeyboardHandlerOptions = {}) {
 
   const isPasteShortcut = (event: KeyboardEvent): boolean =>
     event.code === "KeyV" && !event.altKey && isWorkbenchPrimaryModifier(event);
+
+  const isCopyShortcut = (event: KeyboardEvent): boolean =>
+    event.code === "KeyC" && !event.altKey && isWorkbenchPrimaryModifier(event);
 
   const isLetterOrDigitChord = (event: KeyboardEvent): boolean =>
     !event.altKey &&
@@ -80,6 +85,17 @@ export function createKeyboardHandler(options: KeyboardHandlerOptions = {}) {
       event.preventDefault();
       event.stopPropagation();
       options.requestPaste?.();
+      return false;
+    }
+
+    if (
+      isCopyShortcut(event) &&
+      event.type === "keydown" &&
+      options.hasSelection?.()
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      options.copySelection?.();
       return false;
     }
 

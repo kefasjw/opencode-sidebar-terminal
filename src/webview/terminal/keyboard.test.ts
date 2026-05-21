@@ -88,6 +88,20 @@ describe("createKeyboardHandler", () => {
         code: "KeyC",
       }, true, true);
     });
+
+    it("copies terminal selection on Cmd+C", () => {
+      const copySelection = vi.fn();
+      expectKeyboardHandling(createKeyboardHandler({
+        isMac: true,
+        hasSelection: () => true,
+        copySelection,
+      }), {
+        metaKey: true,
+        key: "c",
+        code: "KeyC",
+      }, false, true);
+      expect(copySelection).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("on Windows/Linux", () => {
@@ -132,6 +146,20 @@ describe("createKeyboardHandler", () => {
         key: "c",
         code: "KeyC",
       }, true, true);
+    });
+
+    it("copies terminal selection on Ctrl+C", () => {
+      const copySelection = vi.fn();
+      expectKeyboardHandling(createKeyboardHandler({
+        isMac: false,
+        hasSelection: () => true,
+        copySelection,
+      }), {
+        ctrlKey: true,
+        key: "c",
+        code: "KeyC",
+      }, false, true);
+      expect(copySelection).toHaveBeenCalledTimes(1);
     });
 
     it("requests host paste on Ctrl+V", () => {
