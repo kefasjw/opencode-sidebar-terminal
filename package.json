@@ -401,6 +401,11 @@
           "default": true,
           "description": "Send Ctrl/Cmd + letter shortcuts (including Ctrl+P) directly to the sidebar terminal instead of letting VS Code intercept them. This extension's main purpose is running opencode (a TUI with its own keybindings), so the default is ON. You can turn it off if you prefer normal IDE shortcuts even when the sidebar terminal is focused. Control keys like Ctrl+C are always sent to the terminal."
         },
+        "opencodeTui.showTmuxWindowControls": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show direct tmux session and window controls (+S, previous window, +W, next window) in the terminal toolbar. Turn this off to keep only the tmux command menu."
+        },
         "opencodeTui.autoShareContext": {
           "type": "boolean",
           "default": true,

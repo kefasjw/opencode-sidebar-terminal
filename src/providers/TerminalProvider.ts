@@ -817,6 +817,10 @@ export class TerminalProvider
         "sendKeybindingsToShell",
         true,
       ),
+      showTmuxWindowControls: config.get<boolean>(
+        "showTmuxWindowControls",
+        true,
+      ),
     };
   }
 
@@ -846,6 +850,7 @@ export class TerminalProvider
       cursorStyle: terminalConfig.cursorStyle,
       scrollback: String(terminalConfig.scrollback),
       sendKeybindingsToShell: String(terminalConfig.sendKeybindingsToShell),
+      showTmuxWindowControls: String(terminalConfig.showTmuxWindowControls),
     });
   }
 
