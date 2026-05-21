@@ -269,6 +269,7 @@ Available settings in VS Code settings (`Cmd+,` / `Ctrl+,`):
 | -------------------------------- | ------ | ------- | ------------------------------------------------------------------------ |
 | `opencodeTui.nativeShellDefault` | string | `""`    | Default behavior for native shell switch (`""`, `"opencode"`, `"shell"`) |
 | `opencodeTui.tmuxSessionDefault` | string | `""`    | Default behavior for new tmux sessions (`""`, `"opencode"`, `"shell"`)   |
+| `opencodeTui.showTmuxWindowControls` | boolean | `true` | Show direct tmux session/window controls in the terminal toolbar          |
 
 ### Advanced Settings
 
