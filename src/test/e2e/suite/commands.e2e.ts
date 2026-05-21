@@ -23,8 +23,16 @@ suite("Command registration", () => {
     assert.ok(commands.includes("opencodeTui.toggleDashboard"));
   });
 
-  test("executes focus command without throwing", async () => {
+  test("executes focus command without throwing", async function () {
     await activateExtension();
+
+    const commands = await vscode.commands.getCommands(true);
+    if (!commands.includes("workbench.view.focus")) {
+      console.warn(
+        "Skipping focus execution: workbench.view.focus is not available in this VS Code test host",
+      );
+      this.skip();
+    }
 
     await vscode.commands.executeCommand("opencodeTui.focus");
     assert.ok(true);
