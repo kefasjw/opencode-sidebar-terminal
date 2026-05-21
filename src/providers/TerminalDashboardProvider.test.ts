@@ -976,6 +976,7 @@ describe("TerminalDashboardProvider", () => {
       "claude",
       true,
       undefined,
+      "tmux",
     );
   });
 
@@ -1646,6 +1647,7 @@ describe("TerminalDashboardProvider", () => {
       "claude",
       true,
       "terminal_2",
+      "zellij",
     );
 
     const noTerminalProvider = createProvider();
