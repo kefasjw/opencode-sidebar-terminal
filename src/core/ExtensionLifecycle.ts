@@ -568,7 +568,7 @@ export class ExtensionLifecycle {
     try {
       await vscode.commands.executeCommand("setContext", "opencodeTui.active", false);
     } catch {
-      // ignore
+      // intentionally empty: setContext during deactivation is best-effort
     }
 
     logger?.info("Open Sidebar TUI deactivated");

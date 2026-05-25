@@ -218,7 +218,7 @@ function initApp(): void {
   setupBackendToggleButton(() => activeBackend);
 
   window.addEventListener("message", (event: MessageEvent) => {
-    const msg = event.data as any;
+    const msg = event.data as Record<string, unknown> | undefined;
     if (msg && msg.type === "paneCreate" && "paneId" in msg) {
       const paneId = msg.paneId as string;
       const direction = (msg.direction as string) || "horizontal";

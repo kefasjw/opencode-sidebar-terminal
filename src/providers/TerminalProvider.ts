@@ -65,7 +65,7 @@ export class TerminalProvider
     private readonly nativeTerminalManager?: NativeTerminalManager,
     private readonly tmuxPaneSyncService?: TmuxPaneSyncService,
     // zellijPaneSyncService: reserved for Phase 3 zellij pane sync operations
-    private readonly zellijPaneSyncService?: ZellijPaneSyncService,
+    private readonly _zellijPaneSyncService?: ZellijPaneSyncService,
   ) {
     this.contextSharingService = new ContextSharingService();
     this.aiToolRegistry = new AiToolOperatorRegistry();
@@ -1197,6 +1197,7 @@ export class TerminalProvider
         "workbench.view.extension.opencodeTuiContainer",
       );
     } catch {
+      // intentionally empty: sidebar reveal is best-effort
     }
 
     this._view?.show?.(true);

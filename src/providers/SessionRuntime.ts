@@ -1838,6 +1838,7 @@ export class SessionRuntime {
     try {
       this.activeInstanceId = this.instanceStore.getActive().config.id;
     } catch {
+      // intentionally empty: no active instance is fine during init
     }
 
     this.activeInstanceSubscription = this.instanceStore.onDidSetActive(
@@ -1857,6 +1858,7 @@ export class SessionRuntime {
         this.instanceStore.setActive(instanceId);
       }
     } catch {
+      // intentionally empty: getActive() may throw if instance removed
     }
   }
 
@@ -1901,6 +1903,7 @@ export class SessionRuntime {
           await vscode.env.clipboard.writeText(buf);
         }
       } catch {
+        // intentionally empty: clipboard sync failure is non-critical
       }
     }, 500);
   }

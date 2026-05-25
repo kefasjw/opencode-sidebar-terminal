@@ -438,6 +438,7 @@ export class MessageRouter {
         try {
           return vscode.Uri.parse(file).fsPath;
         } catch {
+          // intentionally empty: fall through to raw file path on URI parse failure
         }
       }
       return file;
