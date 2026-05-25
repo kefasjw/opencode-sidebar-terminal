@@ -10,8 +10,11 @@ import { InstanceId, InstanceStore } from "../services/InstanceStore";
 import { PaneStore } from "../services/PaneStore";
 import { TmuxSessionManager } from "../services/TmuxSessionManager";
 import { AiToolFileReference } from "../services/aiTools/AiToolOperator";
+import { TmuxPaneSyncService } from "../services/TmuxPaneSyncService";
+import { ZellijPaneSyncService } from "../services/ZellijPaneSyncService";
 import {
   AiToolConfig,
+  BackendPaneConfig,
   HostMessage,
   TMUX_RAW_ALLOWED_SUBCOMMANDS,
   TerminalBackendType,
@@ -60,6 +63,8 @@ export class TerminalProvider
       { type: "zellij", label: "Zellij", isAvailable: () => !!zellijSessionManager },
     ]),
     private readonly nativeTerminalManager?: NativeTerminalManager,
+    private readonly tmuxPaneSyncService?: TmuxPaneSyncService,
+    private readonly zellijPaneSyncService?: ZellijPaneSyncService,
   ) {
     this.contextSharingService = new ContextSharingService();
     this.aiToolRegistry = new AiToolOperatorRegistry();
@@ -786,10 +791,25 @@ export class TerminalProvider
     this.setFocusedPane(paneId);
 
     try {
+      const activeBackend = this.sessionRuntime.getActiveBackend();
+      const backendConfig = this.resolveBackendConfig(activeBackend);
       await this.sessionRuntime.createSession(paneId, {
         paneId,
-        backend: "native",
+        backend: activeBackend,
+        backendConfig,
       });
+
+      if (activeBackend === "tmux" && this.tmuxPaneSyncService) {
+        const tmuxSessionId = this.sessionRuntime.getSelectedTmuxSessionId?.() ?? this.sessionRuntime.getSession(TerminalProvider.DEFAULT_PANE_ID)?.tmuxSessionId;
+        if (tmuxSessionId) {
+          try {
+            const direction = message.direction ?? "horizontal";
+            await this.tmuxPaneSyncService.splitPane(tmuxSessionId, direction);
+          } catch (error) {
+            console.warn('[TerminalProvider] tmux split-pane sync failed', error);
+          }
+        }
+      }
     } catch (error) {
       this.logger.error(
         `[TerminalProvider] Failed to create pane session '${paneId}': ${error instanceof Error ? error.message : String(error)}`,
@@ -813,6 +833,8 @@ export class TerminalProvider
     }
 
     this.sessionRuntime.destroySession(paneId);
+    // Backend-specific cleanup is handled by destroySession
+    // (tmux/zellij sessions are detached, not killed)
     this.paneStore.removePane(paneId);
     this.setFocusedPane(this.resolveNextPaneId());
     this.postWebviewMessage({
@@ -1359,8 +1381,20 @@ export class TerminalProvider
     return TerminalProvider.DEFAULT_PANE_ID;
   }
 
+  private resolveBackendConfig(backend: TerminalBackendType): BackendPaneConfig | undefined {
+    if (backend === "tmux") {
+      const tmuxSessionId = this.sessionRuntime.getSession(TerminalProvider.DEFAULT_PANE_ID)?.tmuxSessionId;
+      return tmuxSessionId ? { tmux: { sessionId: tmuxSessionId } } : undefined;
+    }
+    if (backend === "zellij") {
+      const zellijSessionId = this.sessionRuntime.getSession(TerminalProvider.DEFAULT_PANE_ID)?.zellijSessionId;
+      return zellijSessionId ? { zellij: { sessionId: zellijSessionId } } : undefined;
+    }
+    return undefined;
+  }
+
   private isMultiPaneSupportedBackend(): boolean {
-    return this.sessionRuntime.getActiveBackend() === "native";
+    return true;
   }
 
   private getNonce(): string {

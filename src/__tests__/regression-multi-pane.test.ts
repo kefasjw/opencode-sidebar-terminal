@@ -253,34 +253,32 @@ describe("multi-pane regression coverage", () => {
     expect(writeSpy).toHaveBeenCalledWith("opencode-main", "@/tmp/regression.ts ");
   });
 
-  it("disables pane creation after switching to the tmux backend", async () => {
+  it("enables pane creation for the tmux backend (Phase 2: all backends support multi-pane)", async () => {
     mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
     provider = createProvider();
     const runtime = provider["sessionRuntime"];
-    const createSessionSpy = vi.spyOn(runtime, "createSession");
+    const createSessionSpy = vi.spyOn(runtime, "createSession").mockResolvedValue(undefined);
     vi.spyOn(runtime, "getActiveBackend").mockReturnValue("tmux");
     const { messageHandler } = resolveProvider(provider);
 
     messageHandler({ type: "paneCreate", paneId: "tmux-pane" });
     await flushAsyncStartup();
 
-    expect(createSessionSpy).not.toHaveBeenCalled();
-    expect(provider["paneStore"].getPane("tmux-pane")).toBeUndefined();
+    expect(createSessionSpy).toHaveBeenCalledWith("tmux-pane", expect.objectContaining({ backend: "tmux" }));
   });
 
-  it("disables pane creation after switching to the zellij backend", async () => {
+  it("enables pane creation for the zellij backend (Phase 2: all backends support multi-pane)", async () => {
     mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
     provider = createProvider();
     const runtime = provider["sessionRuntime"];
-    const createSessionSpy = vi.spyOn(runtime, "createSession");
+    const createSessionSpy = vi.spyOn(runtime, "createSession").mockResolvedValue(undefined);
     vi.spyOn(runtime, "getActiveBackend").mockReturnValue("zellij");
     const { messageHandler } = resolveProvider(provider);
 
     messageHandler({ type: "paneCreate", paneId: "zellij-pane" });
     await flushAsyncStartup();
 
-    expect(createSessionSpy).not.toHaveBeenCalled();
-    expect(provider["paneStore"].getPane("zellij-pane")).toBeUndefined();
+    expect(createSessionSpy).toHaveBeenCalledWith("zellij-pane", expect.objectContaining({ backend: "zellij" }));
   });
 
   it("allows native multi-pane sessions while keeping resize behavior intact for all visible panes", async () => {
