@@ -77,6 +77,8 @@ export interface MessageRouterProviderBridge {
 }
 
 export class MessageRouter {
+  private static readonly DEFAULT_PANE_ID = "default";
+
   public constructor(
     private readonly provider: MessageRouterProviderBridge,
     private readonly context: vscode.ExtensionContext,
@@ -94,15 +96,16 @@ export class MessageRouter {
     }
 
     const message = rawMessage as WebviewMessage;
+    const paneId = this.resolvePaneId(message.paneId);
     switch (message.type) {
       case "terminalInput":
-        this.handleTerminalInput(message.data);
+        this.handleTerminalInput(message.data, paneId);
         break;
       case "terminalResize":
-        this.handleTerminalResize(message.cols, message.rows);
+        this.handleTerminalResize(message.cols, message.rows, paneId);
         break;
       case "ready":
-        this.handleReady(message.cols, message.rows);
+        this.handleReady(message.cols, message.rows, paneId);
         break;
       case "filesDropped":
         await this.handleFilesDropped(
@@ -110,6 +113,7 @@ export class MessageRouter {
           message.shiftKey ?? false,
           message.dropCell,
           message.blobFiles,
+          paneId,
         );
         break;
       case "openUrl":
@@ -229,15 +233,15 @@ export class MessageRouter {
     }
   }
 
-  public handleTerminalInput(data: string | undefined): void {
+  public handleTerminalInput(
+    data: string | undefined,
+    paneId: string = MessageRouter.DEFAULT_PANE_ID,
+  ): void {
     if (typeof data !== "string") {
       return;
     }
 
-    this.terminalManager.writeToTerminal(
-      this.provider.getActiveTerminalId(),
-      data,
-    );
+    this.terminalManager.writeToTerminal(this.resolveTerminalTarget(paneId), data);
   }
 
   private async handleExecuteTmuxCommand(commandId: unknown): Promise<void> {
@@ -307,6 +311,7 @@ export class MessageRouter {
   public handleTerminalResize(
     cols: number | undefined,
     rows: number | undefined,
+    paneId: string = MessageRouter.DEFAULT_PANE_ID,
   ): void {
     if (typeof cols !== "number" || typeof rows !== "number") {
       return;
@@ -314,13 +319,17 @@ export class MessageRouter {
 
     this.provider.setLastKnownTerminalSize(cols, rows);
     this.terminalManager.resizeTerminal(
-      this.provider.getActiveTerminalId(),
+      this.resolveTerminalTarget(paneId),
       cols,
       rows,
     );
   }
 
-  public handleReady(cols: number | undefined, rows: number | undefined): void {
+  public handleReady(
+    cols: number | undefined,
+    rows: number | undefined,
+    _paneId: string = MessageRouter.DEFAULT_PANE_ID,
+  ): void {
     if (typeof cols === "number" && typeof rows === "number") {
       this.provider.setLastKnownTerminalSize(cols, rows);
     }
@@ -414,6 +423,7 @@ export class MessageRouter {
     shiftKey: boolean,
     dropCell?: { col: number; row: number },
     blobFiles?: DroppedBlobFile[],
+    paneId: string = MessageRouter.DEFAULT_PANE_ID,
   ): Promise<void> {
     this.logger.info(
       `[PROVIDER] handleFilesDropped - files: ${JSON.stringify(files)} shiftKey: ${shiftKey} dropCell: ${JSON.stringify(dropCell)}`,
@@ -462,14 +472,14 @@ export class MessageRouter {
                 `[PROVIDER] Pane routing failed, falling back to active terminal`,
               );
               this.terminalManager.writeToTerminal(
-                this.provider.getActiveInstanceId(),
+                this.resolveTerminalTarget(paneId),
                 fileRefs + " ",
               );
             }
           });
       } else {
         this.terminalManager.writeToTerminal(
-          this.provider.getActiveInstanceId(),
+          this.resolveTerminalTarget(paneId),
           fileRefs + " ",
         );
       }
@@ -480,10 +490,20 @@ export class MessageRouter {
       );
       this.logger.info(`[PROVIDER] Writing without @: ${filePaths}`);
       this.terminalManager.writeToTerminal(
-        this.provider.getActiveInstanceId(),
+        this.resolveTerminalTarget(paneId),
         filePaths + " ",
       );
     }
+  }
+
+  private resolvePaneId(paneId: string | undefined): string {
+    return paneId ?? MessageRouter.DEFAULT_PANE_ID;
+  }
+
+  private resolveTerminalTarget(paneId: string): string {
+    return paneId === MessageRouter.DEFAULT_PANE_ID
+      ? this.provider.getActiveTerminalId()
+      : paneId;
   }
 
   public async handlePaste(): Promise<void> {

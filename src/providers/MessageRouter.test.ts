@@ -272,6 +272,30 @@ describe("MessageRouter", () => {
     });
   });
 
+  it("routes terminal input and resize to pane-specific terminal ids", async () => {
+    await router.handleMessage({
+      type: "terminalInput",
+      data: "pane text",
+      paneId: "pane-2",
+    });
+    await router.handleMessage({
+      type: "terminalResize",
+      cols: 140,
+      rows: 50,
+      paneId: "pane-2",
+    });
+
+    expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
+      "pane-2",
+      "pane text",
+    );
+    expect(terminalManager.resizeTerminal).toHaveBeenCalledWith(
+      "pane-2",
+      140,
+      50,
+    );
+  });
+
   it("forwards Ctrl+C control bytes unchanged to the active terminal", async () => {
     await router.handleMessage({ type: "terminalInput", data: "\x03" });
 
@@ -416,16 +440,39 @@ describe("MessageRouter", () => {
       { col: 4, row: 2 },
     );
     expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
-      "instance-1",
+      "terminal-1",
       "@/workspace/src/index.ts /workspace/notes.md ",
     );
     expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
-      "instance-1",
+      "terminal-1",
       "@/workspace/README.md ",
     );
     expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
-      "instance-1",
+      "terminal-1",
       "/workspace/docs/guide.md ",
+    );
+  });
+
+  it("routes filesDropped fallback writes to the targeted pane id", async () => {
+    vi.mocked(vscode.workspace.asRelativePath).mockImplementation(
+      (value: string) => value,
+    );
+
+    provider.routeDroppedTextToTmuxPane = vi
+      .fn<MessageRouterProviderBridge["routeDroppedTextToTmuxPane"]>()
+      .mockResolvedValueOnce(false);
+
+    await router.handleMessage({
+      type: "filesDropped",
+      files: ["/workspace/pane.txt"],
+      shiftKey: true,
+      dropCell: { col: 1, row: 1 },
+      paneId: "pane-7",
+    });
+
+    expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
+      "pane-7",
+      "@/workspace/pane.txt ",
     );
   });
 
@@ -457,7 +504,7 @@ describe("MessageRouter", () => {
       false,
     );
     expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
-      "instance-1",
+      "terminal-1",
       "/outside/workspace/file.ts ",
     );
   });
@@ -485,7 +532,7 @@ describe("MessageRouter", () => {
       false,
     );
     expect(terminalManager.writeToTerminal).toHaveBeenCalledWith(
-      "instance-1",
+      "terminal-1",
       "/tmp/opencode-tests/opencode-drop-uuid-1234-notes.txt ",
     );
 
