@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITerminalAddon, type ITerminalOptions } from "@xterm/xterm";
-import type { DroppedBlobFile } from "../types";
+import type { DroppedBlobFile, TerminalBackendType } from "../types";
 import { postMessage } from "./shared/vscode-api";
 
 export interface TerminalInstance {
@@ -33,6 +33,8 @@ class CanvasAddonFallback implements ITerminalAddon {
 export class PaneManager {
   private readonly instances = new Map<string, TerminalInstance>();
 
+  private readonly backends = new Map<string, TerminalBackendType>();
+
   private container: HTMLElement | null = null;
 
   private focusedPaneId: string | null = null;
@@ -53,6 +55,7 @@ export class PaneManager {
     paneId: string,
     container: HTMLElement,
     options: ITerminalOptions = {},
+    backend: TerminalBackendType = "native",
   ): TerminalInstance {
     this.disposePane(paneId);
 
@@ -81,6 +84,7 @@ export class PaneManager {
     };
 
     this.instances.set(paneId, instance);
+    this.backends.set(paneId, backend);
 
     if (!this.focusedPaneId) {
       this.focusedPaneId = paneId;
@@ -93,6 +97,7 @@ export class PaneManager {
     paneId: string,
     terminal: Terminal | null,
     container: HTMLElement,
+    backend: TerminalBackendType = "native",
   ): void {
     if (terminal) {
       const fitAddon = new FitAddon();
@@ -104,8 +109,9 @@ export class PaneManager {
         disposed: false,
         rendererType: "webgl",
       });
+      this.backends.set(paneId, backend);
     } else {
-      this.createPane(paneId, container);
+      this.createPane(paneId, container, {}, backend);
     }
   }
 
@@ -123,15 +129,42 @@ export class PaneManager {
     }
 
     this.instances.delete(paneId);
+    this.backends.delete(paneId);
 
     if (this.focusedPaneId === paneId) {
       this.focusedPaneId = this.getFirstPaneId();
     }
   }
 
+  async switchPaneBackend(
+    paneId: string,
+    newBackend: TerminalBackendType,
+  ): Promise<void> {
+    const instance = this.instances.get(paneId);
+    if (!instance) {
+      return;
+    }
+
+    if (instance.terminal) {
+      instance.terminal.dispose();
+    }
+
+    this.backends.set(paneId, newBackend);
+    instance.disposed = true;
+  }
+
   writeData(paneId: string, data: string): void {
     const instance = this.instances.get(paneId);
-    if (!instance || instance.disposed) {
+    if (!instance) {
+      return;
+    }
+
+    if (instance.disposed) {
+      this.createPane(paneId, instance.container, {}, this.getBackend(paneId));
+      const newInstance = this.instances.get(paneId);
+      if (newInstance) {
+        newInstance.terminal.write(data);
+      }
       return;
     }
 
@@ -178,6 +211,16 @@ export class PaneManager {
 
   getPane(paneId: string): TerminalInstance | undefined {
     return this.instances.get(paneId);
+  }
+
+  getBackend(paneId: string): TerminalBackendType {
+    return this.backends.get(paneId) ?? "native";
+  }
+
+  setBackend(paneId: string, backend: TerminalBackendType): void {
+    if (this.instances.has(paneId)) {
+      this.backends.set(paneId, backend);
+    }
   }
 
   getAllPaneIds(): string[] {
