@@ -137,7 +137,10 @@ describe("multi-pane regression coverage", () => {
     return configuration;
   }
 
-  function createProvider(): TerminalProvider {
+  function createProvider(options?: {
+    tmuxSessionManager?: TmuxSessionManager;
+    zellijSessionManager?: any;
+  }): TerminalProvider {
     const context = new vscode.ExtensionContext();
     const portManager = PortManager.getInstance();
     return new TerminalProvider(
@@ -145,6 +148,9 @@ describe("multi-pane regression coverage", () => {
       terminalManager,
       captureManager,
       portManager,
+      undefined,
+      options?.tmuxSessionManager,
+      options?.zellijSessionManager,
     );
   }
 
@@ -391,5 +397,136 @@ describe("multi-pane regression coverage", () => {
       }),
     );
     expect(provider.formatEditorReference(editor)).toBe("@src/legacy.ts#L10-L20");
+  });
+
+  describe("Phase 2: Backend Integration Regression", () => {
+    it("Native multi-pane still works after backend integration", async () => {
+      mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+      provider = createProvider();
+      const runtime = provider["sessionRuntime"];
+      vi.spyOn(runtime, "getActiveBackend").mockReturnValue("native");
+      const { messageHandler } = resolveProvider(provider);
+
+      messageHandler({ type: "ready", cols: 100, rows: 30 });
+      await flushAsyncStartup();
+
+      messageHandler({ type: "paneCreate", paneId: "pane-1" });
+      messageHandler({ type: "paneCreate", paneId: "pane-2" });
+      messageHandler({ type: "paneCreate", paneId: "pane-3" });
+      await flushAsyncStartup();
+
+      expect(provider["paneStore"].getAllPanes().size).toBe(4);
+      ["default", "pane-1", "pane-2", "pane-3"].forEach(id => {
+        expect(runtime.getSession(id)).toEqual(
+          expect.objectContaining({ backend: "native" })
+        );
+      });
+    });
+
+    it("Tmux backend pane creation", async () => {
+      mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+      const tmuxSessionManager = { isAvailable: () => true } as any;
+      provider = createProvider({ tmuxSessionManager });
+      const runtime = provider["sessionRuntime"];
+      const createSessionSpy = vi.spyOn(runtime, "createSession").mockResolvedValue(undefined);
+      vi.spyOn(runtime, "getActiveBackend").mockReturnValue("tmux");
+      const { messageHandler } = resolveProvider(provider);
+
+      messageHandler({ type: "paneCreate", paneId: "tmux-pane" });
+      await flushAsyncStartup();
+
+      expect(createSessionSpy).toHaveBeenCalledWith("tmux-pane", expect.objectContaining({ backend: "tmux" }));
+    });
+
+    it("Zellij backend pane creation", async () => {
+      mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+      const zellijSessionManager = { isAvailable: () => true } as any;
+      provider = createProvider({ zellijSessionManager });
+      const runtime = provider["sessionRuntime"];
+      const createSessionSpy = vi.spyOn(runtime, "createSession").mockResolvedValue(undefined);
+      vi.spyOn(runtime, "getActiveBackend").mockReturnValue("zellij");
+      const { messageHandler } = resolveProvider(provider);
+
+      messageHandler({ type: "paneCreate", paneId: "zellij-pane" });
+      await flushAsyncStartup();
+
+      expect(createSessionSpy).toHaveBeenCalledWith("zellij-pane", expect.objectContaining({ backend: "zellij" }));
+    });
+
+    it("Mixed backend panes", async () => {
+      mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+      const tmuxSessionManager = {
+        isAvailable: () => true,
+        ensureSession: vi.fn().mockResolvedValue({ action: "attached", session: { id: "tmux-s" } }),
+      } as any;
+      provider = createProvider({ tmuxSessionManager });
+      const runtime = provider["sessionRuntime"];
+      const { messageHandler } = resolveProvider(provider);
+
+      messageHandler({ type: "ready", cols: 100, rows: 30 });
+      await flushAsyncStartup();
+
+      vi.spyOn(runtime, "getActiveBackend").mockReturnValue("native");
+      messageHandler({ type: "paneCreate", paneId: "native-pane" });
+      await flushAsyncStartup();
+
+      vi.spyOn(runtime, "getActiveBackend").mockReturnValue("tmux");
+      vi.spyOn(runtime, "getSession").mockImplementation((paneId) => {
+        if (paneId === "default") return { tmuxSessionId: "tmux-s" } as any;
+        if (paneId === "native-pane") return { backend: "native" } as any;
+        if (paneId === "tmux-pane") return { backend: "tmux" } as any;
+        return undefined;
+      });
+      messageHandler({ type: "paneCreate", paneId: "tmux-pane" });
+      await flushAsyncStartup();
+
+      expect(runtime.getSession("native-pane")?.backend).toBe("native");
+      expect(runtime.getSession("tmux-pane")?.backend).toBe("tmux");
+    });
+
+    it("Backend switch preserves pane", async () => {
+      mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+      const tmuxSessionManager = {
+        isAvailable: () => true,
+        executeRawCommand: vi.fn().mockResolvedValue(""),
+      } as any;
+      provider = createProvider({ tmuxSessionManager });
+      const runtime = provider["sessionRuntime"];
+      const { messageHandler } = resolveProvider(provider);
+
+      messageHandler({ type: "ready", cols: 100, rows: 30 });
+      await flushAsyncStartup();
+
+      vi.spyOn(runtime, "getActiveBackend").mockReturnValue("native");
+      messageHandler({ type: "paneCreate", paneId: "switch-pane" });
+      await flushAsyncStartup();
+      
+      vi.spyOn(runtime, "getSession").mockImplementation((paneId) => {
+        if (paneId === "default") return { tmuxSessionId: "tmux-s" } as any;
+        if (paneId === "switch-pane") return { backend: "native", terminalKey: "switch-pane", instanceId: "switch-pane" } as any;
+        return undefined;
+      });
+      expect(runtime.getSession("switch-pane")?.backend).toBe("native");
+
+      vi.spyOn(runtime, "getActiveBackend").mockReturnValue("tmux");
+      vi.spyOn(runtime, "createSession").mockResolvedValue(undefined);
+      vi.spyOn(runtime, "getSession").mockImplementation((paneId) => {
+        if (paneId === "default") return { tmuxSessionId: "tmux-s" } as any;
+        if (paneId === "switch-pane") return { backend: "tmux" } as any;
+        return undefined;
+      });
+      messageHandler({ type: "paneSwitchBackend", paneId: "switch-pane", backend: "tmux" });
+      await flushAsyncStartup();
+
+      expect(provider["paneStore"].getPane("switch-pane")).toBeDefined();
+      expect(runtime.getSession("switch-pane")?.backend).toBe("tmux");
+    });
+
+    it("All backends support multi-pane", async () => {
+      mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+      provider = createProvider();
+
+      expect(provider["isMultiPaneSupportedBackend"]()).toBe(true);
+    });
   });
 });
