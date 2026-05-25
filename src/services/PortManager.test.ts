@@ -6,7 +6,8 @@ describe("PortManager", () => {
   let portManager: PortManager;
 
   beforeEach(() => {
-    portManager = new PortManager();
+    PortManager.resetInstance();
+    portManager = PortManager.getInstance();
   });
 
   describe("getAvailablePort", () => {
@@ -233,7 +234,7 @@ describe("PortManager", () => {
         state: "connected",
       });
 
-      const coordinatedPortManager = new PortManager(instanceStore);
+      const coordinatedPortManager = PortManager.getInstance(instanceStore);
 
       expect(coordinatedPortManager.isPortAvailable(30000)).toBe(false);
       expect(coordinatedPortManager.isPortAvailable(30001)).toBe(true);

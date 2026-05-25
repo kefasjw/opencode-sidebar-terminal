@@ -15,18 +15,20 @@
 import type { InstanceStore } from "./InstanceStore";
 
 export class PortManager {
+  private static instance: PortManager | undefined;
+
   // Ephemeral port range (16384-65535)
   private static readonly MIN_PORT = 16384;
   private static readonly MAX_PORT = 65535;
 
   // Track used ports
-  private usedPorts: Set<number> = new Set();
+  private usedPorts!: Set<number>;
 
   // Track port-to-terminal mapping
-  private terminalPortMap: Map<string, number> = new Map();
+  private terminalPortMap!: Map<string, number>;
 
   // Track port-to-terminal reverse mapping for cleanup
-  private portTerminalMap: Map<number, string> = new Map();
+  private portTerminalMap!: Map<number, string>;
 
   // Reference to InstanceStore for cross-instance port coordination
   private instanceStore?: InstanceStore;
@@ -35,8 +37,34 @@ export class PortManager {
    * Initialize PortManager with optional InstanceStore for coordination
    * @param instanceStore - Optional InstanceStore for cross-instance port conflict detection
    */
-  constructor(instanceStore?: InstanceStore) {
+  private constructor(instanceStore?: InstanceStore) {
+    this.usedPorts = new Set();
+    this.terminalPortMap = new Map();
+    this.portTerminalMap = new Map();
     this.instanceStore = instanceStore;
+  }
+
+  public static getInstance(instanceStore?: InstanceStore): PortManager {
+    if (!PortManager.instance) {
+      PortManager.instance = PortManager.createInstance(instanceStore);
+    } else if (instanceStore && !PortManager.instance.instanceStore) {
+      PortManager.instance.instanceStore = instanceStore;
+    }
+
+    return PortManager.instance;
+  }
+
+  public static resetInstance(): void {
+    PortManager.instance = undefined;
+  }
+
+  private static createInstance(instanceStore?: InstanceStore): PortManager {
+    const instance = Object.create(PortManager.prototype) as PortManager;
+    instance.usedPorts = new Set();
+    instance.terminalPortMap = new Map();
+    instance.portTerminalMap = new Map();
+    instance.instanceStore = instanceStore;
+    return instance;
   }
 
   /**

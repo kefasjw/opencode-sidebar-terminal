@@ -34,9 +34,10 @@ describe("InstanceController", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    PortManager.resetInstance();
     terminalManager = new TerminalManager();
     instanceStore = new InstanceStore();
-    portManager = new PortManager();
+    portManager = PortManager.getInstance();
     outputChannel = vscode.window.createOutputChannel("test");
 
     controller = new InstanceController(
