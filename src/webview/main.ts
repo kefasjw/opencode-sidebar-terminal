@@ -3,6 +3,12 @@ import * as TmuxPrompt from "./tmux-prompt";
 import * as AiSelector from "./ai-tool-selector";
 import * as TmuxCmd from "./tmux-command-dropdown";
 import { HostMessage } from "../types";
+import { PaneManager } from "./pane-manager";
+import { PaneMessageRouter } from "./pane-message-router";
+import { LayoutEngine } from "./layout/layout-engine";
+import { TabBar } from "./tab-bar/tab-bar";
+import { PaneActions } from "./pane-actions/pane-actions";
+import { FocusManager } from "./focus/focus-manager";
 import type { TerminalBackendAvailability, TerminalBackendType } from "../types";
 import {
   copySelectionToClipboard,
@@ -148,6 +154,30 @@ function initApp(): void {
     messageHandler.fitAddon = instance.fitAddon;
   }
 
+  const multiPaneContainer = document.getElementById("multi-pane-container") ?? container;
+  const paneManager = new PaneManager();
+  paneManager.init(multiPaneContainer);
+  const paneRouter = new PaneMessageRouter();
+  const layoutEngine = new LayoutEngine(multiPaneContainer);
+  const tabBar = new TabBar(paneManager, paneRouter);
+  const focusManager = new FocusManager(paneManager, paneRouter);
+  focusManager.init(multiPaneContainer);
+
+  const paneActions = new PaneActions({
+    layoutEngine,
+    paneManager,
+    getFocusedPaneId: () => focusManager.getFocusedPane(),
+    getCurrentPaneCount: () => paneManager.getAllPaneIds().length,
+    getLayoutRoot: () => multiPaneContainer,
+  });
+  paneActions.init(
+    document.getElementById("pane-actions-container") ?? undefined,
+  );
+
+  paneManager.registerPane("default", instance?.terminal ?? null, container);
+  focusManager.registerPane("default", container);
+  tabBar.addTab("default", "Terminal");
+
   container.addEventListener(
     "paste",
     (event: ClipboardEvent) => {
@@ -184,6 +214,29 @@ function initApp(): void {
   setupBackendToggleButton(() => activeBackend);
 
   window.addEventListener("message", (event: MessageEvent) => {
+    const msg = event.data as any;
+    if (msg && msg.type === "paneCreate" && "paneId" in msg) {
+      const paneId = msg.paneId as string;
+      const direction = (msg.direction as string) || "horizontal";
+      layoutEngine.splitPane(
+        "default",
+        direction as "horizontal" | "vertical",
+        paneId,
+      );
+      const newContainer = layoutEngine.getPaneElement(paneId);
+      if (newContainer) {
+        paneManager.registerPane(paneId, null, newContainer);
+        focusManager.registerPane(paneId, newContainer);
+        tabBar.addTab(paneId, `Terminal ${paneId}`);
+      }
+    }
+    if (msg && msg.type === "paneDelete" && "paneId" in msg) {
+      const paneId = msg.paneId as string;
+      paneManager.disposePane(paneId);
+      focusManager.unregisterPane(paneId);
+      layoutEngine.removePane(paneId);
+      tabBar.removeTab(paneId);
+    }
     messageHandler.handleEvent(event as MessageEvent<HostMessage>);
   });
 
