@@ -4537,5 +4537,77 @@ describe("SessionRuntime - Workspace Session Resolution", () => {
     // the corresponding manager null checks at lines 1142, 1259, 1565, 1619, and
     // 1690 are false by construction. Several V8 branch slots also correspond to
     // optional chaining / nullish coalescing sub-branches inside these same guards.
+  describe("multi-pane session management", () => {
+    it("startPaneSession with native backend creates PTY session", async () => {
+      const session = await sessionRuntime.startPaneSession("pane-1", "native", {
+        paneId: "pane-1",
+        command: "ls",
+      });
+
+      expect(session).toBeDefined();
+      expect(session?.backend).toBe("native");
+      expect(mockTerminalManager.createTerminal).toHaveBeenCalledWith(
+        "pane-1",
+        "ls",
+        expect.any(Object),
+        undefined,
+        undefined,
+        undefined,
+        "default::pane-1",
+        "/workspace/project-a",
+      );
+    });
+
+    it("startPaneSession with tmux backend creates terminal with tmux attach command", async () => {
+      const session = await sessionRuntime.startPaneSession("pane-1", "tmux", {
+        paneId: "pane-1",
+        backendConfig: { tmux: { sessionId: "session-1" } },
+      });
+
+      expect(session).toBeDefined();
+      expect(session?.backend).toBe("tmux");
+      expect(session?.tmuxSessionId).toBe("session-1");
+      expect(mockTerminalManager.createTerminal).toHaveBeenCalledWith(
+        "pane-1",
+        "tmux attach -t session-1",
+        {},
+        undefined,
+        undefined,
+        undefined,
+        "default::pane-1",
+        "/workspace/project-a",
+      );
+    });
+
+    it("switchPaneBackend cleans up old session and creates new one", async () => {
+      await sessionRuntime.startPaneSession("pane-1", "tmux", {
+        paneId: "pane-1",
+        backendConfig: { tmux: { sessionId: "session-1" } },
+      });
+      vi.mocked(mockTerminalManager.createTerminal).mockClear();
+
+      const newSession = await sessionRuntime.switchPaneBackend("pane-1", "native");
+
+      expect(mockTerminalManager.killTerminal).toHaveBeenCalledWith("pane-1");
+      expect(newSession).toBeDefined();
+      expect(newSession?.backend).toBe("native");
+    });
+
+    it("switchPaneBackend throws for nonexistent pane", async () => {
+      await expect(
+        sessionRuntime.switchPaneBackend("nonexistent", "native"),
+      ).rejects.toThrow("switchPaneBackend: no session for pane nonexistent");
+    });
+
+    it("createSession with tmux backend does not throw", async () => {
+      await expect(
+        sessionRuntime.createSession("pane-1", {
+          paneId: "pane-1",
+          backend: "tmux",
+          backendConfig: { tmux: { sessionId: "session-1" } },
+        }),
+      ).resolves.toBeDefined();
+    });
   });
+});
 });

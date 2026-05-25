@@ -254,17 +254,60 @@ export class SessionRuntime {
 
     const requestedBackend = config.backend ?? "native";
     const backend = this.backendRegistry.resolveAvailable(requestedBackend);
-    if (backend !== "native") {
-      throw new Error(
-        `Multi-session is only supported for the native backend (pane=${normalizedPaneId}, backend=${backend})`,
-      );
-    }
 
     const workspaceConfig = vscode.workspace.getConfiguration("opencodeTui");
     const enableHttpApi = workspaceConfig.get<boolean>("enableHttpApi", true);
     const workspacePath =
       config.cwd ?? this.resolveStartupWorkspacePath().workspacePath;
     const instanceId = this.createPaneInstanceId(normalizedPaneId);
+
+    if (backend === "tmux") {
+      const tmuxSessionId = config.backendConfig?.tmux?.sessionId;
+      if (!this.tmuxSessionManager || !tmuxSessionId) {
+        throw new Error(`tmux backend requires tmuxSessionManager and sessionId`);
+      }
+      this.terminalManager.createTerminal(
+        normalizedPaneId,
+        `tmux attach -t ${tmuxSessionId}`,
+        {},
+        undefined,
+        this.lastKnownCols || undefined,
+        this.lastKnownRows || undefined,
+        instanceId,
+        workspacePath,
+      );
+      return this.registerSession({
+        paneId: normalizedPaneId,
+        instanceId,
+        terminalKey: normalizedPaneId,
+        backend,
+        tmuxSessionId,
+      });
+    }
+
+    if (backend === "zellij") {
+      const zellijSessionId = config.backendConfig?.zellij?.sessionId;
+      if (!this.zellijSessionManager || !zellijSessionId) {
+        throw new Error(`zellij backend requires zellijSessionManager and sessionId`);
+      }
+      this.terminalManager.createTerminal(
+        normalizedPaneId,
+        `zellij attach ${zellijSessionId}`,
+        {},
+        undefined,
+        this.lastKnownCols || undefined,
+        this.lastKnownRows || undefined,
+        instanceId,
+        workspacePath,
+      );
+      return this.registerSession({
+        paneId: normalizedPaneId,
+        instanceId,
+        terminalKey: normalizedPaneId,
+        backend,
+        zellijSessionId,
+      });
+    }
 
     const resolvedTool = this.activeTool ?? this.resolveStoredTool();
     const operator = resolvedTool
@@ -331,6 +374,53 @@ export class SessionRuntime {
     }
 
     return sessionState;
+  }
+
+  public async startPaneSession(
+    paneId: string,
+    backend: TerminalBackendType,
+    config?: PaneConfig,
+  ): Promise<SessionState | undefined> {
+    const fullConfig: PaneConfig = {
+      ...config,
+      paneId,
+      backend,
+    };
+    return this.createSession(paneId, fullConfig);
+  }
+
+  public async switchPaneBackend(
+    paneId: string,
+    newBackend: TerminalBackendType,
+  ): Promise<SessionState | undefined> {
+    const normalizedPaneId = this.normalizePaneId(paneId);
+    const existingSession = this.sessions.get(normalizedPaneId);
+    if (!existingSession) {
+      throw new Error(`switchPaneBackend: no session for pane ${normalizedPaneId}`);
+    }
+
+    const oldBackend = existingSession.backend;
+    if (oldBackend === "tmux" && existingSession.tmuxSessionId && this.tmuxSessionManager) {
+      try {
+        await this.tmuxSessionManager.executeRawCommand(
+          existingSession.tmuxSessionId,
+          "detach-client",
+        );
+      } catch (error) {
+        console.warn('[SessionRuntime] tmux detach failed during backend switch', error);
+      }
+    } else if (
+      oldBackend === "zellij" &&
+      existingSession.zellijSessionId &&
+      this.zellijSessionManager
+    ) {
+      // zellij detach not supported — session remains alive
+    }
+
+    this.terminalManager.killTerminal(existingSession.terminalKey);
+    this.sessions.delete(normalizedPaneId);
+
+    return this.startPaneSession(paneId, newBackend);
   }
 
   public destroySession(paneId: string): void {
