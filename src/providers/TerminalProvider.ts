@@ -5,7 +5,9 @@ import { OpenCodeApiClient } from "../services/OpenCodeApiClient";
 import { PortManager } from "../services/PortManager";
 import { ContextSharingService } from "../services/ContextSharingService";
 import { OutputChannelService } from "../services/OutputChannelService";
+import { DataThrottleService } from "../services/DataThrottleService";
 import { InstanceId, InstanceStore } from "../services/InstanceStore";
+import { PaneStore } from "../services/PaneStore";
 import { TmuxSessionManager } from "../services/TmuxSessionManager";
 import { AiToolFileReference } from "../services/aiTools/AiToolOperator";
 import {
@@ -37,14 +39,18 @@ export class TerminalProvider
   private readonly aiToolRegistry: AiToolOperatorRegistry;
   private readonly sessionRuntime: SessionRuntime;
   private readonly messageRouter: MessageRouter;
+  private readonly dataThrottleService: DataThrottleService;
+  private readonly paneStore = new PaneStore();
   private readonly pendingWebviewMessages: HostMessage[] = [];
   private pendingQueueablePostChecks = 0;
+  private static readonly DEFAULT_PANE_ID = "default";
+  private static readonly DEFAULT_TAB_ID = "default";
 
   public constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly terminalManager: TerminalManager,
     private readonly captureManager: OutputCaptureManager,
-    private readonly portManager: PortManager,
+    private readonly portManager: PortManager = PortManager.getInstance(),
     private readonly instanceStore?: InstanceStore,
     private readonly tmuxSessionManager?: TmuxSessionManager,
     private readonly zellijSessionManager?: ZellijSessionManager,
@@ -57,6 +63,15 @@ export class TerminalProvider
   ) {
     this.contextSharingService = new ContextSharingService();
     this.aiToolRegistry = new AiToolOperatorRegistry();
+    this.dataThrottleService = new DataThrottleService((batch) => {
+      for (const item of batch) {
+        this.postWebviewMessageNow({
+          type: "terminalOutput",
+          data: item.data,
+          paneId: item.paneId,
+        });
+      }
+    });
 
     this.sessionRuntime = new SessionRuntime(
       this.terminalManager,
@@ -181,6 +196,7 @@ export class TerminalProvider
       localResourceRoots: [this.context.extensionUri],
     };
 
+    this.ensureDefaultPaneState();
     webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
 
     const processAlive = this.sessionRuntime.hasLiveTerminalProcess();
@@ -212,7 +228,7 @@ export class TerminalProvider
         this.pendingQueueablePostChecks > 0;
       this.flushPendingWebviewMessages(webviewView.webview);
       if (!hadPendingMessages) {
-        this.postWebviewMessage({ type: "webviewVisible" });
+        this.postWebviewVisibleForKnownPanes();
         this.postTerminalConfig();
       }
 
@@ -252,7 +268,10 @@ export class TerminalProvider
 
   public focus(): void {
     this._panel?.reveal(vscode.ViewColumn.Active);
-    this.postWebviewMessage({ type: "focusTerminal" });
+    this.postWebviewMessage({
+      type: "focusTerminal",
+      paneId: this.getFocusedPaneId(),
+    });
   }
 
   public async toggleEditorAttachment(): Promise<void> {
@@ -546,6 +565,25 @@ export class TerminalProvider
   }
 
   private handleMessage(message: unknown): void {
+    if (this.isPaneScopedWebviewMessage(message)) {
+      this.dataThrottleService.setFocusedPane(this.normalizePaneId(message.paneId));
+    }
+
+    if (this.isPaneCreateWebviewMessage(message)) {
+      void this.handlePaneCreate(message);
+      return;
+    }
+
+    if (this.isPaneDeleteWebviewMessage(message)) {
+      this.handlePaneDelete(message);
+      return;
+    }
+
+    if (this.isNonDefaultReadyMessage(message)) {
+      void this.handleNonDefaultPaneReady(message);
+      return;
+    }
+
     this.messageRouter.handleMessage(message);
   }
 
@@ -709,6 +747,103 @@ export class TerminalProvider
     this.terminalManager.resizeTerminal(this.activeTerminalId, cols, rows);
   }
 
+  private async handlePaneCreate(message: {
+    paneId?: string;
+    direction?: "horizontal" | "vertical";
+  }): Promise<void> {
+    const paneId = this.normalizePaneId(message.paneId);
+    if (paneId === TerminalProvider.DEFAULT_PANE_ID) {
+      this.ensureDefaultPaneState();
+      return;
+    }
+
+    if (!this.isMultiPaneSupportedBackend()) {
+      return;
+    }
+
+    this.ensureDefaultPaneState();
+    if (this.paneStore.getPane(paneId)) {
+      this.setFocusedPane(paneId);
+      return;
+    }
+
+    this.paneStore.addPane({
+      paneId,
+      tabId: this.paneStore.getActiveTab() ?? TerminalProvider.DEFAULT_TAB_ID,
+      isActive: true,
+      size: 100,
+      splitDirection: message.direction,
+    });
+    this.setFocusedPane(paneId);
+
+    try {
+      await this.sessionRuntime.createSession(paneId, {
+        paneId,
+        backend: "native",
+      });
+    } catch (error) {
+      this.logger.error(
+        `[TerminalProvider] Failed to create pane session '${paneId}': ${error instanceof Error ? error.message : String(error)}`,
+      );
+      this.paneStore.removePane(paneId);
+      this.setFocusedPane(this.getFocusedPaneId());
+      this.postWebviewMessage({
+        type: "terminalExited",
+        paneId,
+      });
+    }
+  }
+
+  private handlePaneDelete(message: { paneId?: string }): void {
+    const paneId = this.normalizePaneId(message.paneId);
+    if (
+      paneId === TerminalProvider.DEFAULT_PANE_ID ||
+      !this.isMultiPaneSupportedBackend()
+    ) {
+      return;
+    }
+
+    this.sessionRuntime.destroySession(paneId);
+    this.paneStore.removePane(paneId);
+    this.setFocusedPane(this.resolveNextPaneId());
+    this.postWebviewMessage({
+      type: "focusTerminal",
+      paneId: this.getFocusedPaneId(),
+    });
+  }
+
+  private async handleNonDefaultPaneReady(message: {
+    cols: number;
+    rows: number;
+    paneId?: string;
+  }): Promise<void> {
+    const paneId = this.normalizePaneId(message.paneId);
+    if (!this.isMultiPaneSupportedBackend()) {
+      return;
+    }
+
+    this.ensureDefaultPaneState();
+    if (!this.paneStore.getPane(paneId)) {
+      this.paneStore.addPane({
+        paneId,
+        tabId: this.paneStore.getActiveTab() ?? TerminalProvider.DEFAULT_TAB_ID,
+        isActive: true,
+        size: 100,
+      });
+    }
+    this.setFocusedPane(paneId);
+
+    if (!this.sessionRuntime.getSession(paneId)) {
+      await this.sessionRuntime.createSession(paneId, {
+        paneId,
+        backend: "native",
+      });
+    }
+
+    this.messageRouter.handleTerminalResize(message.cols, message.rows, paneId);
+    this.postPlatformInfo();
+  }
+
   private getActiveInstanceId(): InstanceId {
     return this.activeInstanceId;
   }
@@ -726,6 +861,52 @@ export class TerminalProvider
   }
 
   private postWebviewMessage(message: unknown): void {
+    if (this.isTerminalOutputHostMessage(message)) {
+      this.dataThrottleService.push(
+        this.normalizePaneId(message.paneId),
+        message.data,
+      );
+      return;
+    }
+
+    if (this.isPaneScopedHostMessage(message)) {
+      const paneId = this.normalizePaneId(message.paneId);
+      if (message.type === "focusTerminal" || message.type === "webviewVisible") {
+        this.dataThrottleService.setFocusedPane(paneId);
+        this.dataThrottleService.flush();
+      }
+
+      this.postWebviewMessageNow({
+        ...message,
+        paneId,
+      });
+      return;
+    }
+
+    this.postWebviewMessageNow(message);
+  }
+
+  private postPlatformInfo(): void {
+    this.postWebviewMessage({
+      type: "platformInfo",
+      platform: process.platform,
+      tmuxAvailable: !!this.tmuxSessionManager,
+      zellijAvailable: !!this.zellijSessionManager,
+      backendAvailability: this.sessionRuntime.getBackendAvailability(),
+      activeBackend: this.sessionRuntime.getActiveBackend(),
+    });
+  }
+
+  private postWebviewVisibleForKnownPanes(): void {
+    for (const paneId of this.getKnownPaneIds()) {
+      this.postWebviewMessage({
+        type: "webviewVisible",
+        paneId,
+      });
+    }
+  }
+
+  private postWebviewMessageNow(message: unknown): void {
     const webview = this._panel?.webview ?? this._view?.webview;
     if (webview) {
       const postResult = webview.postMessage(message) as
@@ -771,6 +952,94 @@ export class TerminalProvider
     value: boolean | Thenable<boolean>,
   ): value is Thenable<boolean> {
     return typeof value === "object" && value !== null && "then" in value;
+  }
+
+  private isTerminalOutputHostMessage(
+    message: unknown,
+  ): message is Extract<HostMessage, { type: "terminalOutput" }> {
+    return (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "terminalOutput" &&
+      "data" in message &&
+      typeof message.data === "string"
+    );
+  }
+
+  private isPaneScopedHostMessage(
+    message: unknown,
+  ): message is Extract<
+    HostMessage,
+    {
+      type:
+        | "terminalExited"
+        | "clearTerminal"
+        | "focusTerminal"
+        | "webviewVisible";
+    }
+  > {
+    return (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      (message.type === "terminalExited" ||
+        message.type === "clearTerminal" ||
+        message.type === "focusTerminal" ||
+        message.type === "webviewVisible")
+    );
+  }
+
+  private normalizePaneId(paneId: string | undefined): string {
+    return paneId ?? TerminalProvider.DEFAULT_PANE_ID;
+  }
+
+  private isPaneScopedWebviewMessage(
+    message: unknown,
+  ): message is { paneId?: string } {
+    return typeof message === "object" && message !== null && "type" in message;
+  }
+
+  private isPaneCreateWebviewMessage(
+    message: unknown,
+  ): message is { type: "paneCreate"; paneId?: string; direction?: "horizontal" | "vertical" } {
+    return (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "paneCreate"
+    );
+  }
+
+  private isPaneDeleteWebviewMessage(
+    message: unknown,
+  ): message is { type: "paneDelete"; paneId?: string } {
+    return (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "paneDelete"
+    );
+  }
+
+  private isNonDefaultReadyMessage(
+    message: unknown,
+  ): message is { type: "ready"; cols: number; rows: number; paneId?: string } {
+    return (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === "ready" &&
+      this.normalizePaneId(
+        "paneId" in message && typeof message.paneId === "string"
+          ? message.paneId
+          : undefined,
+      ) !== TerminalProvider.DEFAULT_PANE_ID &&
+      "cols" in message &&
+      typeof message.cols === "number" &&
+      "rows" in message &&
+      typeof message.rows === "number"
+    );
   }
 
   private isQueueableHostMessage(
@@ -859,6 +1128,7 @@ export class TerminalProvider
   private initializeEditorPanel(panel: vscode.WebviewPanel): void {
     this._panel = panel;
     panel.webview.options = this.getEditorPanelOptions();
+    this.ensureDefaultPaneState();
     panel.webview.html = this.getHtmlForWebview(panel.webview);
 
     const processAlive = this.sessionRuntime.hasLiveTerminalProcess();
@@ -883,7 +1153,7 @@ export class TerminalProvider
         this._panel = undefined;
         if (this._view) {
           this.postTerminalConfig();
-          this.postWebviewMessage({ type: "webviewVisible" });
+          this.postWebviewVisibleForKnownPanes();
         }
       }
     });
@@ -898,7 +1168,10 @@ export class TerminalProvider
     }
 
     this._view?.show?.(true);
-    this.postWebviewMessage({ type: "focusTerminal" });
+    this.postWebviewMessage({
+      type: "focusTerminal",
+      paneId: this.getFocusedPaneId(),
+    });
   }
 
   private postTerminalConfig(): void {
@@ -949,10 +1222,54 @@ export class TerminalProvider
       )
       .toString();
     const nonce = this.getNonce();
+    const layoutCssUri = webview
+      .asWebviewUri(
+        vscode.Uri.joinPath(
+          this.context.extensionUri,
+          "src",
+          "webview",
+          "layout",
+          "layout-engine.css",
+        ),
+      )
+      .toString();
+    const tabBarCssUri = webview
+      .asWebviewUri(
+        vscode.Uri.joinPath(
+          this.context.extensionUri,
+          "src",
+          "webview",
+          "tab-bar",
+          "tab-bar.css",
+        ),
+      )
+      .toString();
+    const paneActionsCssUri = webview
+      .asWebviewUri(
+        vscode.Uri.joinPath(
+          this.context.extensionUri,
+          "src",
+          "webview",
+          "pane-actions",
+          "pane-actions.css",
+        ),
+      )
+      .toString();
+    const focusManagerCssUri = webview
+      .asWebviewUri(
+        vscode.Uri.joinPath(
+          this.context.extensionUri,
+          "src",
+          "webview",
+          "focus",
+          "focus-manager.css",
+        ),
+      )
+      .toString();
 
     const terminalConfig = this.getTerminalConfig();
 
-    return renderTerminalHtml({
+    const html = renderTerminalHtml({
       cspSource: webview.cspSource,
       nonce,
       cssUri,
@@ -965,6 +1282,76 @@ export class TerminalProvider
       sendKeybindingsToShell: String(terminalConfig.sendKeybindingsToShell),
       showTmuxWindowControls: String(terminalConfig.showTmuxWindowControls),
     });
+
+    const multiPaneCssLinks = [
+      layoutCssUri,
+      tabBarCssUri,
+      paneActionsCssUri,
+      focusManagerCssUri,
+    ]
+      .map((uri) => `<link rel="stylesheet" href="${uri}" />`)
+      .join("\n    ");
+    const bootstrapScript = `<script nonce="${nonce}">(() => {\n  const container = document.getElementById("terminal-container");\n  if (!container) {\n    return;\n  }\n\n  if (!document.getElementById("terminal-layout-root")) {\n    const root = document.createElement("div");\n    root.id = "terminal-layout-root";\n    root.className = "layout-root";\n    root.dataset.defaultPaneId = "${TerminalProvider.DEFAULT_PANE_ID}";\n    container.parentElement?.insertBefore(root, container);\n    root.appendChild(container);\n  }\n\n  document.body.dataset.multiPaneBootstrap = "enabled";\n  window.__OPENCODE_TUI_MULTI_PANE__ = Object.freeze({\n    defaultPaneId: "${TerminalProvider.DEFAULT_PANE_ID}",\n    components: [\n      "PaneManager",\n      "PaneMessageRouter",\n      "LayoutEngine",\n      "TabBar",\n      "PaneActions",\n      "FocusManager"\n    ]\n  });\n})();</script>`;
+
+    return html
+      .replace("</head>", `    ${multiPaneCssLinks}\n  </head>`)
+      .replace(
+        `<script nonce="${nonce}" src="${scriptUri}"></script>`,
+        `${bootstrapScript}\n    <script nonce="${nonce}" src="${scriptUri}"></script>`,
+      );
+  }
+
+  private ensureDefaultPaneState(): void {
+    if (this.paneStore.getPane(TerminalProvider.DEFAULT_PANE_ID)) {
+      return;
+    }
+
+    this.paneStore.addPane({
+      paneId: TerminalProvider.DEFAULT_PANE_ID,
+      tabId: TerminalProvider.DEFAULT_TAB_ID,
+      isActive: true,
+      size: 100,
+    });
+    this.dataThrottleService.setFocusedPane(TerminalProvider.DEFAULT_PANE_ID);
+  }
+
+  private getKnownPaneIds(): string[] {
+    const paneIds = Array.from(this.paneStore.getAllPanes().keys());
+    return paneIds.length > 0 ? paneIds : [TerminalProvider.DEFAULT_PANE_ID];
+  }
+
+  private getFocusedPaneId(): string {
+    return this.paneStore.getActivePane()?.paneId ?? TerminalProvider.DEFAULT_PANE_ID;
+  }
+
+  private setFocusedPane(paneId: string): void {
+    const normalizedPaneId = this.normalizePaneId(paneId);
+    if (this.paneStore.getPane(normalizedPaneId)) {
+      this.paneStore.setActivePane(normalizedPaneId);
+    }
+    this.dataThrottleService.setFocusedPane(normalizedPaneId);
+  }
+
+  private resolveNextPaneId(): string {
+    const nextPaneId = this.paneStore.getActivePane()?.paneId;
+    if (nextPaneId) {
+      return nextPaneId;
+    }
+
+    const firstRemainingPaneId = this.paneStore.getAllPanes().keys().next().value as
+      | string
+      | undefined;
+    if (firstRemainingPaneId) {
+      this.paneStore.setActivePane(firstRemainingPaneId);
+      return firstRemainingPaneId;
+    }
+
+    this.ensureDefaultPaneState();
+    return TerminalProvider.DEFAULT_PANE_ID;
+  }
+
+  private isMultiPaneSupportedBackend(): boolean {
+    return this.sessionRuntime.getActiveBackend() === "native";
   }
 
   private getNonce(): string {
@@ -1007,6 +1394,8 @@ export class TerminalProvider
   }
 
   public dispose(): void {
+    this.dataThrottleService.dispose();
+    this.paneStore.dispose();
     this.sessionRuntime.dispose();
   }
 }

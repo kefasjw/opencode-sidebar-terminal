@@ -116,7 +116,7 @@ export class ExtensionLifecycle {
       this.instanceDiscoveryService = new InstanceDiscoveryService();
 
       this.instanceStore = new InstanceStore();
-      this.portManager = new PortManager(this.instanceStore);
+      this.portManager = PortManager.getInstance(this.instanceStore);
       const tmuxSessionManager = new TmuxSessionManager(logger);
       if (await tmuxSessionManager.isAvailable()) {
         this.tmuxSessionManager = tmuxSessionManager;

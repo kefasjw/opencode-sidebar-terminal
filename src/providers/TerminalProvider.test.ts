@@ -50,6 +50,7 @@ describe("TerminalProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     OutputChannelService.resetInstance();
+    PortManager.resetInstance();
     terminalManager = new TerminalManager();
     captureManager = new OutputCaptureManager();
     vscode.workspace.workspaceFolders = undefined;
@@ -59,6 +60,7 @@ describe("TerminalProvider", () => {
     provider?.dispose();
     terminalManager.dispose();
     OutputChannelService.resetInstance();
+    PortManager.resetInstance();
   });
 
   function mockConfiguration(options?: {
@@ -122,7 +124,7 @@ describe("TerminalProvider", () => {
     zellijSessionManager?: any;
   }): TerminalProvider {
     const context = new vscode.ExtensionContext();
-    const portManager = new PortManager();
+    const portManager = PortManager.getInstance(options?.instanceStore);
     return new TerminalProvider(
       context as any,
       terminalManager,
@@ -635,6 +637,7 @@ describe("TerminalProvider", () => {
     );
     provider.focus();
     expect(panel.webview.postMessage).toHaveBeenCalledWith({
+      paneId: "default",
       type: "focusTerminal",
     });
   });
@@ -651,6 +654,20 @@ describe("TerminalProvider", () => {
 
     expect(restoredPanel.webview.html).toContain("default-src 'none'");
     expect(restoredPanel.webview.onDidReceiveMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("injects multi-pane stylesheet links and bootstrap markers into the webview HTML", () => {
+    mockConfiguration();
+    provider = createProvider();
+
+    const { view } = resolveProvider(provider);
+
+    expect(view.webview.html).toContain("layout-engine.css");
+    expect(view.webview.html).toContain("tab-bar.css");
+    expect(view.webview.html).toContain("pane-actions.css");
+    expect(view.webview.html).toContain("focus-manager.css");
+    expect(view.webview.html).toContain("terminal-layout-root");
+    expect(view.webview.html).toContain("__OPENCODE_TUI_MULTI_PANE__");
   });
 
   it("toggles from the sidebar into the editor panel", async () => {
@@ -704,6 +721,106 @@ describe("TerminalProvider", () => {
       "opencode-main",
       os.homedir(),
     );
+  });
+
+  it("creates native pane sessions and tracks pane state for paneCreate messages", async () => {
+    mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+    provider = createProvider();
+    const runtime = provider["sessionRuntime"];
+    vi.spyOn(runtime, "getActiveBackend").mockReturnValue("native");
+    const createSessionSpy = vi
+      .spyOn(runtime, "createSession")
+      .mockResolvedValue(undefined);
+    const { messageHandler } = resolveProvider(provider);
+
+    messageHandler({
+      type: "paneCreate",
+      paneId: "pane-2",
+      direction: "vertical",
+    });
+    await flushAsyncStartup();
+
+    expect(createSessionSpy).toHaveBeenCalledWith("pane-2", {
+      paneId: "pane-2",
+      backend: "native",
+    });
+    expect(provider["paneStore"].getPane("pane-2")).toEqual(
+      expect.objectContaining({
+        paneId: "pane-2",
+        tabId: "default",
+        isActive: true,
+        splitDirection: "vertical",
+      }),
+    );
+  });
+
+  it("destroys pane sessions, removes pane state, and refocuses the default pane on paneDelete", async () => {
+    mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+    provider = createProvider();
+    const runtime = provider["sessionRuntime"];
+    vi.spyOn(runtime, "getActiveBackend").mockReturnValue("native");
+    vi.spyOn(runtime, "createSession").mockResolvedValue(undefined);
+    const destroySessionSpy = vi
+      .spyOn(runtime, "destroySession")
+      .mockImplementation(() => {});
+    const { messageHandler, view } = resolveProvider(provider);
+
+    messageHandler({ type: "paneCreate", paneId: "pane-delete" });
+    await flushAsyncStartup();
+    vi.mocked(view.webview.postMessage).mockClear();
+
+    messageHandler({ type: "paneDelete", paneId: "pane-delete" });
+
+    expect(destroySessionSpy).toHaveBeenCalledWith("pane-delete");
+    expect(provider["paneStore"].getPane("pane-delete")).toBeUndefined();
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      type: "focusTerminal",
+      paneId: "default",
+    });
+  });
+
+  it("creates non-default pane sessions on ready without restarting the default session", async () => {
+    mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+    provider = createProvider();
+    const runtime = provider["sessionRuntime"];
+    vi.spyOn(runtime, "getActiveBackend").mockReturnValue("native");
+    const startSpy = vi.spyOn(provider, "startOpenCode").mockResolvedValue();
+    const createSessionSpy = vi
+      .spyOn(runtime, "createSession")
+      .mockResolvedValue(undefined);
+    vi.spyOn(runtime, "getSession").mockReturnValue(undefined);
+    const { messageHandler } = resolveProvider(provider);
+
+    messageHandler({ type: "ready", cols: 96, rows: 28, paneId: "pane-ready" });
+    await flushAsyncStartup();
+
+    expect(createSessionSpy).toHaveBeenCalledWith("pane-ready", {
+      paneId: "pane-ready",
+      backend: "native",
+    });
+    expect(startSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps paneCreate disabled for tmux and zellij backends", async () => {
+    mockConfiguration({ autoStartOnOpen: false, enableHttpApi: false });
+    provider = createProvider();
+    const runtime = provider["sessionRuntime"];
+    const createSessionSpy = vi
+      .spyOn(runtime, "createSession")
+      .mockResolvedValue(undefined);
+    const { messageHandler } = resolveProvider(provider);
+
+    vi.spyOn(runtime, "getActiveBackend").mockReturnValue("tmux");
+    messageHandler({ type: "paneCreate", paneId: "tmux-pane" });
+    await flushAsyncStartup();
+
+    vi.spyOn(runtime, "getActiveBackend").mockReturnValue("zellij");
+    messageHandler({ type: "paneCreate", paneId: "zellij-pane" });
+    await flushAsyncStartup();
+
+    expect(createSessionSpy).not.toHaveBeenCalled();
+    expect(provider["paneStore"].getPane("tmux-pane")).toBeUndefined();
+    expect(provider["paneStore"].getPane("zellij-pane")).toBeUndefined();
   });
 
   it("uses defaultAiTool config for non-tmux sessions", async () => {
@@ -1352,6 +1469,7 @@ describe("TerminalProvider", () => {
     expect((provider as any).activeInstanceId).toBe("session-b");
     expect(startSpy).not.toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith({
+      paneId: "default",
       type: "clearTerminal",
     });
     expect(resizeSpy).toHaveBeenCalledWith("session-b", 90, 30);
@@ -1382,6 +1500,7 @@ describe("TerminalProvider", () => {
     expect((provider as any).activeInstanceId).toBe("session-c");
     expect(startSpy).toHaveBeenCalled();
     expect(view.webview.postMessage).toHaveBeenCalledWith({
+      paneId: "default",
       type: "clearTerminal",
     });
   });
@@ -2209,6 +2328,7 @@ describe("TerminalProvider", () => {
     visibilityListener();
 
     expect(view.webview.postMessage).toHaveBeenCalledWith({
+      paneId: "default",
       type: "webviewVisible",
     });
     expect(startSpy).toHaveBeenCalledTimes(1);
@@ -2648,6 +2768,7 @@ describe("TerminalProvider", () => {
 
     expect(reconnectSpy).toHaveBeenCalledTimes(2);
     expect(view.webview.postMessage).toHaveBeenCalledWith({
+      paneId: "default",
       type: "webviewVisible",
     });
   });
