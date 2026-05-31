@@ -66,6 +66,7 @@ export class TerminalManager {
       ...windowsDefaults,
       ...process.env,
       TERM: "xterm-256color",
+      COLORTERM: "truecolor",
       ...env,
     } as Record<string, string>;
 

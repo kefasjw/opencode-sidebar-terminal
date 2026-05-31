@@ -98,6 +98,7 @@ describe("TerminalManager", () => {
             _EXTENSION_OPENCODE_PORT: "8080",
             OPENCODE_CALLER: "vscode",
             TERM: "xterm-256color",
+            COLORTERM: "truecolor",
           }),
         }),
       );
@@ -114,6 +115,7 @@ describe("TerminalManager", () => {
       const envArg = spawnCall[2].env;
 
       expect(envArg).toHaveProperty("TERM", "xterm-256color");
+      expect(envArg).toHaveProperty("COLORTERM", "truecolor");
       expect(envArg).toHaveProperty("_EXTENSION_OPENCODE_PORT", "9090");
     });
 
@@ -145,6 +147,7 @@ describe("TerminalManager", () => {
         expect.objectContaining({
           env: expect.objectContaining({
             TERM: "xterm-256color",
+            COLORTERM: "truecolor",
           }),
         }),
       );
@@ -162,6 +165,19 @@ describe("TerminalManager", () => {
       const envArg = spawnCall[2].env;
 
       expect(envArg).toHaveProperty("TERM", "vt100");
+    });
+
+    it("should allow custom env to override COLORTERM", () => {
+      const customEnv = {
+        COLORTERM: "24bit",
+      };
+
+      manager.createTerminal("test-id", undefined, customEnv);
+
+      const spawnCall = vi.mocked(nodePty.spawn).mock.calls[0];
+      const envArg = spawnCall[2].env;
+
+      expect(envArg).toHaveProperty("COLORTERM", "24bit");
     });
   });
 
@@ -456,6 +472,7 @@ describe("TerminalManager", () => {
           env: expect.objectContaining({
             SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
             TERM: "xterm-256color",
+            COLORTERM: "truecolor",
           }),
         }),
       );
@@ -710,6 +727,7 @@ describe("TerminalManager", () => {
         expect.objectContaining({
           env: expect.objectContaining({
             TERM: "xterm-256color",
+            COLORTERM: "truecolor",
           }),
         }),
       );
@@ -763,6 +781,7 @@ describe("TerminalManager", () => {
           _EXTENSION_OPENCODE_PORT: "8123",
           OPENCODE_CALLER: "vscode",
           TERM: "xterm-256color",
+          COLORTERM: "truecolor",
           SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
         }),
       );
@@ -783,6 +802,7 @@ describe("TerminalManager", () => {
         expect.objectContaining({
           env: expect.objectContaining({
             TERM: "xterm-256color",
+            COLORTERM: "truecolor",
           }),
         }),
       );
