@@ -381,6 +381,7 @@ export type HostMessage =
       type: "terminalConfig";
       fontSize: number;
       fontFamily: string;
+      lineHeight: number;
       cursorBlink: boolean;
       cursorStyle: "block" | "underline" | "bar";
       scrollback: number;
@@ -429,6 +430,7 @@ export interface ExtensionConfig {
   command: string;
   fontSize: number;
   fontFamily: string;
+  lineHeight: number;
   cursorBlink: boolean;
   cursorStyle: "block" | "underline" | "bar";
   scrollback: number;

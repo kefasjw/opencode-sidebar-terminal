@@ -10,6 +10,7 @@ describe("renderTerminalHtml", () => {
       scriptUri: "webview.js",
       fontSize: "14",
       fontFamily: "monospace",
+      lineHeight: "1",
       cursorBlink: "true",
       cursorStyle: "block",
       scrollback: "10000",
@@ -33,6 +34,7 @@ describe("renderTerminalHtml", () => {
       scriptUri: "script-uri",
       fontSize: "16",
       fontFamily: "JetBrains Mono",
+      lineHeight: "1.2",
       cursorBlink: "false",
       cursorStyle: "underline",
       scrollback: "5000",
@@ -47,6 +49,7 @@ describe("renderTerminalHtml", () => {
     expect(html).toContain('src="script-uri"');
     expect(html).toContain('data-font-size="16"');
     expect(html).toContain('data-font-family="JetBrains Mono"');
+    expect(html).toContain('data-line-height="1.2"');
     expect(html).toContain('data-cursor-blink="false"');
     expect(html).toContain('data-cursor-style="underline"');
     expect(html).toContain('data-scrollback="5000"');

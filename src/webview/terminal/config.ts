@@ -1,6 +1,7 @@
 export interface TerminalConfig {
   fontSize: number;
   fontFamily: string;
+  lineHeight: number;
   cursorBlink: boolean;
   cursorStyle: "block" | "underline" | "bar";
   scrollback: number;
@@ -13,6 +14,7 @@ export function readTerminalConfig(element: HTMLElement): TerminalConfig {
     fontFamily:
       element.dataset.fontFamily ||
       "'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'CascadiaCode NF', Menlo, monospace",
+    lineHeight: parseFloat(element.dataset.lineHeight || "1"),
     cursorBlink: element.dataset.cursorBlink !== "false",
     cursorStyle: (element.dataset.cursorStyle || "block") as
       | "block"

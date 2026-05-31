@@ -1,6 +1,7 @@
 export interface TerminalContainerParams {
   fontSize: string;
   fontFamily: string;
+  lineHeight: string;
   cursorBlink: string;
   cursorStyle: string;
   scrollback: string;
@@ -11,6 +12,7 @@ export interface TerminalContainerParams {
 export function renderTerminalContainer({
   fontSize,
   fontFamily,
+  lineHeight,
   cursorBlink,
   cursorStyle,
   scrollback,
@@ -20,6 +22,7 @@ export function renderTerminalContainer({
       id="terminal-container"
       data-font-size="${fontSize}"
       data-font-family="${fontFamily}"
+      data-line-height="${lineHeight}"
       data-cursor-blink="${cursorBlink}"
       data-cursor-style="${cursorStyle}"
       data-scrollback="${scrollback}"

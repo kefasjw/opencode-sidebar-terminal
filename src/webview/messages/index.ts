@@ -98,6 +98,7 @@ export function createMessageHandler(
           if (terminal) {
             terminal.options.fontSize = message.fontSize;
             terminal.options.fontFamily = message.fontFamily;
+            terminal.options.lineHeight = message.lineHeight;
             terminal.options.cursorBlink = message.cursorBlink;
             terminal.options.cursorStyle = message.cursorStyle;
             if (fitAddon) {

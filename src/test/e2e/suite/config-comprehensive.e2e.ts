@@ -61,6 +61,12 @@ const configurationSpecs: Record<string, ConfigurationSpec> = {
     type: "string",
     defaultValue: nerdFontStack,
   },
+  "opencodeTui.lineHeight": {
+    type: "number",
+    defaultValue: 1,
+    minimum: 0.8,
+    maximum: 2,
+  },
   "opencodeTui.cursorBlink": { type: "boolean", defaultValue: true },
   "opencodeTui.cursorStyle": {
     type: "string",
@@ -268,5 +274,6 @@ suite("Runtime configuration defaults", () => {
     assert.strictEqual(defaultValue("autoStartOnOpen"), true);
     assert.strictEqual(defaultValue("enableHttpApi"), true);
     assert.strictEqual(defaultValue("fontSize"), 14);
+    assert.strictEqual(defaultValue("lineHeight"), 1);
   });
 });

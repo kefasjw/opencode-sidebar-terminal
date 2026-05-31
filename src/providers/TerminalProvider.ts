@@ -920,6 +920,7 @@ export class TerminalProvider
         "fontFamily",
         "'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'CascadiaCode NF', Menlo, monospace",
       ),
+      lineHeight: config.get<number>("lineHeight", 1),
       cursorBlink: config.get<boolean>("cursorBlink", true),
       cursorStyle: config.get<"block" | "underline" | "bar">(
         "cursorStyle",
@@ -959,6 +960,7 @@ export class TerminalProvider
       scriptUri,
       fontSize: String(terminalConfig.fontSize),
       fontFamily: terminalConfig.fontFamily,
+      lineHeight: String(terminalConfig.lineHeight),
       cursorBlink: String(terminalConfig.cursorBlink),
       cursorStyle: terminalConfig.cursorStyle,
       scrollback: String(terminalConfig.scrollback),

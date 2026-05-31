@@ -20,6 +20,7 @@ export function renderTerminalHtml({
   scriptUri,
   fontSize,
   fontFamily,
+  lineHeight,
   cursorBlink,
   cursorStyle,
   scrollback,
@@ -43,6 +44,7 @@ export function renderTerminalHtml({
     ${renderTerminalContainer({
       fontSize,
       fontFamily,
+      lineHeight,
       cursorBlink,
       cursorStyle,
       scrollback,

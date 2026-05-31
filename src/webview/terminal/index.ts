@@ -46,6 +46,7 @@ export function initTerminal(
     cursorStyle: config.cursorStyle,
     fontSize: config.fontSize,
     fontFamily: config.fontFamily,
+    lineHeight: config.lineHeight,
     theme: {
       background: "#1e1e1e",
       foreground: "#cccccc",
