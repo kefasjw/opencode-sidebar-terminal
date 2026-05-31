@@ -27,6 +27,17 @@ const isWindowsPlatform = (): boolean =>
   typeof navigator !== "undefined" &&
   /Windows|Win32|Win64/i.test(navigator.userAgent ?? "");
 
+const readCssVariable = (names: string[], fallback: string): string => {
+  const styles = getComputedStyle(document.documentElement);
+  for (const name of names) {
+    const value = styles.getPropertyValue(name).trim();
+    if (value) {
+      return value;
+    }
+  }
+  return fallback;
+};
+
 export function initTerminal(
   container: HTMLElement,
   options: {
@@ -48,8 +59,18 @@ export function initTerminal(
     fontFamily: config.fontFamily,
     lineHeight: config.lineHeight,
     theme: {
-      background: "#1e1e1e",
-      foreground: "#cccccc",
+      background: readCssVariable(
+        ["--vscode-terminal-background", "--vscode-editor-background"],
+        "#1e1e1e",
+      ),
+      foreground: readCssVariable(
+        [
+          "--vscode-terminal-foreground",
+          "--vscode-editor-foreground",
+          "--vscode-foreground",
+        ],
+        "#cccccc",
+      ),
     },
     scrollback: config.scrollback,
   });
