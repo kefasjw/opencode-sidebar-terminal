@@ -102,6 +102,51 @@ describe("createKeyboardHandler", () => {
       }, false, true);
       expect(copySelection).toHaveBeenCalledTimes(1);
     });
+
+    it("sends Ctrl+A on Cmd+Left", () => {
+      const sendInput = vi.fn();
+      const keyboard = createKeyboardHandler({ isMac: true, sendInput });
+
+      const event = createKeyboardEvent({
+        metaKey: true,
+        key: "ArrowLeft",
+        code: "ArrowLeft",
+      });
+
+      expect(keyboard.handler(event)).toBe(false);
+      expect(event.defaultPrevented).toBe(true);
+      expect(sendInput).toHaveBeenCalledWith("\x01");
+    });
+
+    it("sends Ctrl+E on Cmd+Right", () => {
+      const sendInput = vi.fn();
+      const keyboard = createKeyboardHandler({ isMac: true, sendInput });
+
+      const event = createKeyboardEvent({
+        metaKey: true,
+        key: "ArrowRight",
+        code: "ArrowRight",
+      });
+
+      expect(keyboard.handler(event)).toBe(false);
+      expect(event.defaultPrevented).toBe(true);
+      expect(sendInput).toHaveBeenCalledWith("\x05");
+    });
+
+    it("does not intercept Cmd+Shift+Left", () => {
+      const sendInput = vi.fn();
+      const keyboard = createKeyboardHandler({ isMac: true, sendInput });
+
+      const event = createKeyboardEvent({
+        metaKey: true,
+        shiftKey: true,
+        key: "ArrowLeft",
+        code: "ArrowLeft",
+      });
+
+      expect(keyboard.handler(event)).toBe(true);
+      expect(sendInput).not.toHaveBeenCalled();
+    });
   });
 
   describe("on Windows/Linux", () => {

@@ -69,11 +69,42 @@ export function createKeyboardHandler(options: KeyboardHandlerOptions = {}) {
     !event.metaKey &&
     !event.altKey;
 
+  const getMacCommandArrowInput = (event: KeyboardEvent): string | undefined => {
+    if (
+      !isMac ||
+      event.type !== "keydown" ||
+      !event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey
+    ) {
+      return undefined;
+    }
+
+    if (event.code === "ArrowLeft") {
+      return "\x01";
+    }
+
+    if (event.code === "ArrowRight") {
+      return "\x05";
+    }
+
+    return undefined;
+  };
+
   const handler = (event: KeyboardEvent): boolean => {
     if (isShiftEnter(event) && event.type === "keydown" && options.sendInput) {
       event.preventDefault();
       event.stopPropagation();
       options.sendInput("\x1b[13;2u");
+      return false;
+    }
+
+    const macCommandArrowInput = getMacCommandArrowInput(event);
+    if (macCommandArrowInput && options.sendInput) {
+      event.preventDefault();
+      event.stopPropagation();
+      options.sendInput(macCommandArrowInput);
       return false;
     }
 
