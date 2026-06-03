@@ -116,4 +116,44 @@ describe("createLinkProvider", () => {
     expect(links).toHaveLength(1);
     expect(links?.[0].text).toBe("src/webview/links/index.ts");
   });
+
+  it("links a filename without a directory", async () => {
+    const links = await provideLinks("Open MessageRouter.ts");
+
+    expect(links).toHaveLength(1);
+    expect(links?.[0].text).toBe("MessageRouter.ts");
+
+    links?.[0].activate(mouseEvent, links[0].text);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "openFile",
+      path: "MessageRouter.ts",
+      line: undefined,
+      endLine: undefined,
+      column: undefined,
+    });
+  });
+
+  it("links a filename without a directory with line and column suffixes", async () => {
+    const links = await provideLinks("MessageRouter.ts:347:3");
+
+    expect(links).toHaveLength(1);
+    expect(links?.[0].text).toBe("MessageRouter.ts:347:3");
+
+    links?.[0].activate(mouseEvent, links[0].text);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "openFile",
+      path: "MessageRouter.ts",
+      line: 347,
+      endLine: undefined,
+      column: 3,
+    });
+  });
+
+  it("does not link plain words", async () => {
+    const links = await provideLinks("Open MessageRouter and index files");
+
+    expect(links).toHaveLength(0);
+  });
 });

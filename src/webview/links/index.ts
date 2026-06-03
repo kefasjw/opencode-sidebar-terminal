@@ -4,7 +4,7 @@ import { postMessage } from "../shared/vscode-api";
 const MAX_LINE_LENGTH = 10000;
 
 const PATH_REGEX =
-  /(?:^|[\s"'([{<])(@?((?:file:\/\/|\/|[A-Za-z]:\\|\.?\.?\/)[^\s"'#()<>}\],;]+|[^\s"':\/()<>]+(?:\/[^\s"'#:()<>}\],;]+)+)(?:(?:#L(\d+)(?:-L?(\d+))?)|(?::(\d+)(?:(?::(\d+))|-(\d+))?))?)(?=[\s"').,;:!?)}\]>]|$)/gi;
+  /(?:^|[\s"'([{<])(@?((?:file:\/\/|\/|[A-Za-z]:\\|\.?\.?\/)[^\s"'#()<>}\],;]+|[^\s"':\/()<>]+(?:\/[^\s"'#:()<>}\],;]+)+|[^\s"':\/()<>}\],;]+\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|c|cc|cpp|cxx|h|hpp|cs|php|swift|scala|sh|bash|zsh|fish|ps1|sql|html?|css|scss|sass|less|jsonc?|ya?ml|toml|xml|mdx?|txt|lock|env|ini|cfg|conf))(?:(?:#L(\d+)(?:-L?(\d+))?)|(?::(\d+)(?:(?::(\d+))|-(\d+))?))?)(?=[\s"').,;:!?)}\]>]|$)/gi;
 
 export function createLinkProvider(terminal: Terminal): ILinkProvider {
   return {
