@@ -4,7 +4,7 @@ import { postMessage } from "../shared/vscode-api";
 const MAX_LINE_LENGTH = 10000;
 
 const PATH_REGEX =
-  /(?:^|[\s"'([{<])(@?((?:file:\/\/|\/|[A-Za-z]:\\|\.?\.?\/)[^\s"'#()<>}\],;]+|[^\s"':\/()<>]+(?:\/[^\s"'#:()<>}\],;]+)+)(?:(?:#L(\d+)(?:-L?(\d+))?)|(?::(\d+)(?::(\d+))?))?)(?=[\s"').,;:!?)}\]>]|$)/gi;
+  /(?:^|[\s"'([{<])(@?((?:file:\/\/|\/|[A-Za-z]:\\|\.?\.?\/)[^\s"'#()<>}\],;]+|[^\s"':\/()<>]+(?:\/[^\s"'#:()<>}\],;]+)+)(?:(?:#L(\d+)(?:-L?(\d+))?)|(?::(\d+)(?:(?::(\d+))|-(\d+))?))?)(?=[\s"').,;:!?)}\]>]|$)/gi;
 
 export function createLinkProvider(terminal: Terminal): ILinkProvider {
   return {
@@ -42,7 +42,7 @@ export function createLinkProvider(terminal: Terminal): ILinkProvider {
         const hasAtPrefix = fullMatch.startsWith("@");
         let path = match[2];
         const lineNumStr = match[3] ?? match[5];
-        const endLineStr = match[4];
+        const endLineStr = match[4] ?? match[7];
         const columnNumStr = match[6];
 
         if (!path) continue;

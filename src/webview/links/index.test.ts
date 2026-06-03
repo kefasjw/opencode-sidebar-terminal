@@ -93,6 +93,23 @@ describe("createLinkProvider", () => {
     });
   });
 
+  it("links relative file paths with colon line ranges", async () => {
+    const links = await provideLinks("src/webview/links/index.ts:15-21");
+
+    expect(links).toHaveLength(1);
+    expect(links?.[0].text).toBe("src/webview/links/index.ts:15-21");
+
+    links?.[0].activate(mouseEvent, links[0].text);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "openFile",
+      path: "src/webview/links/index.ts",
+      line: 15,
+      endLine: 21,
+      column: undefined,
+    });
+  });
+
   it("omits trailing punctuation from the linked file path", async () => {
     const links = await provideLinks("Open (src/webview/links/index.ts).");
 
