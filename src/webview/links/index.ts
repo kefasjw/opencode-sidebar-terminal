@@ -1,27 +1,18 @@
-import type { Terminal } from "@xterm/xterm";
+import type { ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 import { postMessage } from "../shared/vscode-api";
-
-interface Link {
-  text: string;
-  range: {
-    start: { x: number; y: number };
-    end: { x: number; y: number };
-  };
-  activate: () => void;
-}
 
 const MAX_LINE_LENGTH = 10000;
 
 const PATH_REGEX =
-  /(?:^[\s"'])(@?((?:file:\/\/|\/|[A-Za-z]:\\|\.?\.?\/)[^\s"'#]+|[^\s":\/]+(?:\/[^\s":\/]+)+)(?:#L(\d+)(?:-L?(\d+))?)?)(?=[\s"']|$)/gi;
+  /(?:^|[\s"'([{<])(@?((?:file:\/\/|\/|[A-Za-z]:\\|\.?\.?\/)[^\s"'#()<>}\],;]+|[^\s"':\/()<>]+(?:\/[^\s"'#:()<>}\],;]+)+)(?:(?:#L(\d+)(?:-L?(\d+))?)|(?::(\d+)(?::(\d+))?))?)(?=[\s"').,;:!?)}\]>]|$)/gi;
 
-export function createLinkProvider(terminal: Terminal) {
+export function createLinkProvider(terminal: Terminal): ILinkProvider {
   return {
     provideLinks(
       bufferLineNumber: number,
-      callback: (links: Link[] | undefined) => void,
+      callback: (links: ILink[] | undefined) => void,
     ) {
-      const line = terminal.buffer.active.getLine(bufferLineNumber);
+      const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
       if (!line) {
         callback(undefined);
         return;
@@ -34,7 +25,8 @@ export function createLinkProvider(terminal: Terminal) {
         return;
       }
 
-      const links: Link[] = [];
+      const links: ILink[] = [];
+      PATH_REGEX.lastIndex = 0;
       let match: RegExpExecArray | null = PATH_REGEX.exec(lineText);
       let lastIndex = -1;
 
@@ -49,8 +41,9 @@ export function createLinkProvider(terminal: Terminal) {
         const fullMatch = match[1];
         const hasAtPrefix = fullMatch.startsWith("@");
         let path = match[2];
-        const lineNumStr = match[3];
+        const lineNumStr = match[3] ?? match[5];
         const endLineStr = match[4];
+        const columnNumStr = match[6];
 
         if (!path) continue;
 
@@ -76,8 +69,11 @@ export function createLinkProvider(terminal: Terminal) {
         if (endLineStr) {
           endLineNumber = parseInt(endLineStr, 10);
         }
+        if (columnNumStr) {
+          columnNumber = parseInt(columnNumStr, 10);
+        }
 
-        if (!hasAtPrefix && !lineNumStr) {
+        if (!hasAtPrefix && !lineNumStr && !columnNumStr) {
           const posRegex = /^(.*?):(\d+)(?::(\d+))?$/;
           const posMatch = path.match(posRegex);
           if (posMatch) {

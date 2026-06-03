@@ -105,7 +105,6 @@ export function initTerminal(
 
   terminal.open(container);
   terminal.focus();
-  terminal.write(MOUSE_ENABLE);
 
   try {
     const webglAddon = new WebglAddon();
@@ -203,7 +202,6 @@ export function initTerminal(
     window.removeEventListener("dragover", dragOverHandler);
     window.removeEventListener("dragleave", dragLeaveHandler);
     window.removeEventListener("drop", dropHandler);
-    terminal.write(MOUSE_DISABLE);
     terminal.dispose();
   };
 
