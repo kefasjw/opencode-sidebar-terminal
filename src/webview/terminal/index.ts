@@ -4,7 +4,10 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { readTerminalConfig } from "./config";
 import { createKeyboardHandler } from "./keyboard";
-import { copySelectionToClipboard } from "../clipboard";
+import {
+  copySelectionToClipboard,
+  handlePasteWithImageSupport,
+} from "../clipboard";
 import {
   setupResizeHandling,
   setupVisibilityHandling,
@@ -77,7 +80,7 @@ export function initTerminal(
 
   const keyboardHandler = createKeyboardHandler({
     sendInput: (data) => options.onData(data),
-    requestPaste: () => postMessage({ type: "triggerPaste" }),
+    requestPaste: () => void handlePasteWithImageSupport(),
     hasSelection: () => terminal.hasSelection(),
     copySelection: () => {
       const selection = terminal.getSelection();
