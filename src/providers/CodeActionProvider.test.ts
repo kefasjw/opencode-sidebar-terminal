@@ -207,7 +207,7 @@ describe("OpenCodeCodeActionProvider", () => {
     );
 
     const fixAction = actions.find(
-      (action) => action.title === "Explain and Fix (Terminal)",
+      (action) => action.title === "Explain and Fix (OpenCode)",
     );
 
     expect(fixAction).toBeDefined();
