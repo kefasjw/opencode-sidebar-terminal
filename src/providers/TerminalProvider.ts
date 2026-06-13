@@ -217,15 +217,7 @@ export class TerminalProvider
       }
 
       if (autoStartOnOpen && !this.isStarted()) {
-        if (this.getNativeRestoreRecord()) {
-          void this.promptNativeRestore().then((restored) => {
-            if (!restored) {
-              void this.startOpenCode();
-            }
-          });
-        } else {
-          void this.startOpenCode();
-        }
+        void this.startOpenCode();
         visibilityListener.dispose();
       }
     });
@@ -234,19 +226,9 @@ export class TerminalProvider
     if (autoStartOnOpen) {
       if (webviewView.visible) {
         if (!this.isStarted()) {
-          if (this.getNativeRestoreRecord()) {
-            void this.promptNativeRestore().then((restored) => {
-              if (!restored) {
-                void this.startOpenCode();
-              }
-            });
-          } else {
-            void this.startOpenCode();
-          }
+          void this.startOpenCode();
         }
       }
-    } else if (webviewView.visible && !this.isStarted()) {
-      void this.promptNativeRestore();
     }
   }
 
@@ -640,69 +622,6 @@ export class TerminalProvider
       tools,
       targetPaneId,
     });
-  }
-
-  private getNativeRestoreRecord():
-    | ReturnType<InstanceStore["getActive"]>
-    | undefined {
-    let record: ReturnType<InstanceStore["getActive"]> | undefined;
-    try {
-      record = this.instanceStore?.getActive();
-    } catch (error) {
-      this.logger.info(
-        `[TerminalProvider] Native restore skipped: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return undefined;
-    }
-
-    if (
-      !record ||
-      record.state !== "disconnected" ||
-      record.config.terminalBackend !== "native" ||
-      !record.config.selectedAiTool
-    ) {
-      return undefined;
-    }
-
-    return record;
-  }
-
-  private async promptNativeRestore(): Promise<boolean> {
-    const record = this.getNativeRestoreRecord();
-
-    if (!record) {
-      return false;
-    }
-
-    const config = vscode.workspace.getConfiguration("opencodeTui");
-    const selectedAiTool = record.config.selectedAiTool;
-    const items = resolveAiToolConfigs(config.get("aiTools", [])).map((tool) => ({
-      label:
-        tool.name === selectedAiTool
-          ? `${tool.label} (previously used)`
-          : tool.label,
-      description: tool.name,
-      toolName: tool.name,
-    }));
-
-    this.logger.info(
-      `[TerminalProvider] Prompting to restore native terminal for ${record.config.id}`,
-    );
-    const selection = await vscode.window.showQuickPick(items, {
-      placeHolder: "Select AI tool to restore terminal",
-    });
-
-    if (!selection) {
-      this.logger.info("[TerminalProvider] Native terminal restore cancelled");
-      return true;
-    }
-
-    this.sessionRuntime.rememberSelectedTool(
-      selection.toolName,
-      record.config.id,
-    );
-    await this.sessionRuntime.startOpenCode();
-    return true;
   }
 
   private resizeActiveTerminal(cols: number, rows: number): void {
